@@ -23,6 +23,16 @@ builder.Services.AddDbContext<MasterErpDbContext>(options =>
 builder.Services.AddScoped<ICompanyDirectoryService, CompanyDirectoryService>();
 
 // ---------------------------------------------------------------------------------------
+// Who is acting, for the audit trail.
+//
+// Registered before the infrastructure wiring below, which adds its own no-op accessor with
+// TryAdd: this one therefore wins in the API, while the desktop application and the tests
+// keep attributing their writes to the system.
+// ---------------------------------------------------------------------------------------
+builder.Services.AddHttpContextAccessor();
+builder.Services.AddScoped<ICurrentUserAccessor, HttpCurrentUserAccessor>();
+
+// ---------------------------------------------------------------------------------------
 // Tenant infrastructure. Registers the tenant resolution chain and a request-scoped
 // TenantErpDbContext bound to whichever tenant the server resolved for this request, so the
 // repositories and services below are tenant-aware without knowing anything about tenancy.

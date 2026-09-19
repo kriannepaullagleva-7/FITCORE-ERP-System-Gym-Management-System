@@ -1,6 +1,7 @@
 using ERP_domain.entities;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
+using ERP_infrastructure.services;
 
 namespace ERP_infrastructure.data
 {
@@ -15,10 +16,26 @@ namespace ERP_infrastructure.data
     /// </summary>
     public class MasterErpDbContext : IdentityDbContext
     {
-        public MasterErpDbContext(DbContextOptions<MasterErpDbContext> options)
+        private readonly ICurrentUserAccessor? _actor;
+
+        /// <summary>
+        /// The accessor is optional so the bootstrapper, the design-time factory and the tests
+        /// construct this context unchanged. Without one, changes are saved but not attributed.
+        /// </summary>
+        public MasterErpDbContext(
+            DbContextOptions<MasterErpDbContext> options,
+            ICurrentUserAccessor? actor = null)
             : base(options)
         {
+            _actor = actor;
         }
+
+        /// <summary>
+        /// The half of the trail that has no tenant: sign-in, permission and company changes.
+        /// A failed sign-in in particular has no company yet, so there is no tenant database to
+        /// write it to.
+        /// </summary>
+        public DbSet<AuditEvent> AuditEvents => Set<AuditEvent>();
 
         public DbSet<Company> Companies => Set<Company>();
         public DbSet<CompanyDatabase> CompanyDatabases => Set<CompanyDatabase>();
@@ -30,9 +47,42 @@ namespace ERP_infrastructure.data
         public DbSet<AppUser> AppUsers => Set<AppUser>();
         public DbSet<AppUserPermission> AppUserPermissions => Set<AppUserPermission>();
 
+        private bool _writingAudit;
+
+        public override async Task<int> SaveChangesAsync(
+            bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
+        {
+            if (_writingAudit || _actor is null)
+            {
+                return await base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+            }
+
+            var drafts = AuditCapture.Collect(ChangeTracker, _actor.Current);
+
+            var result = await base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+
+            if (drafts.Count > 0)
+            {
+                _writingAudit = true;
+                try
+                {
+                    AuditEvents.AddRange(AuditCapture.Finalise(drafts));
+                    await base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+                }
+                finally
+                {
+                    _writingAudit = false;
+                }
+            }
+
+            return result;
+        }
+
         protected override void OnModelCreating(ModelBuilder builder)
         {
             base.OnModelCreating(builder);
+
+            builder.ConfigureAuditEvents();
 
             builder.Entity<Company>(entity =>
             {

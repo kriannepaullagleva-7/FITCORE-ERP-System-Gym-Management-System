@@ -5,6 +5,7 @@ using ERP_infrastructure.services;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace ERP_infrastructure.tenant
 {
@@ -86,6 +87,12 @@ namespace ERP_infrastructure.tenant
             services.AddScoped<IPayrollService, PayrollService>();
             services.AddScoped<IExpenseService, ExpenseService>();
 
+            // Audit. The accessor is a TryAdd so a host that knows about HTTP - the API - can
+            // register its own first and have that one win, while the WinForms application and
+            // the tests fall back to attributing work to the system.
+            services.TryAddScoped<ICurrentUserAccessor, NullCurrentUserAccessor>();
+            services.AddScoped<IAuditService, TenantAuditService>();
+
             return services;
         }
 
@@ -111,6 +118,11 @@ namespace ERP_infrastructure.tenant
             services.AddScoped<IUserAuthenticationService, UserAuthenticationService>();
             services.AddScoped<IUserAccountService, UserAccountService>();
             services.AddScoped<IMasterBootstrapper, MasterBootstrapper>();
+
+            // Sign-in events are recorded against the master database, because a failed attempt
+            // has no company and therefore no tenant database to write to.
+            services.TryAddScoped<ICurrentUserAccessor, NullCurrentUserAccessor>();
+            services.AddScoped<IAuthAuditService, AuthAuditService>();
 
             return services;
         }

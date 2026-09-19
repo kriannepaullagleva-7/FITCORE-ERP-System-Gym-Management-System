@@ -1,14 +1,33 @@
 using Microsoft.EntityFrameworkCore;
 using ERP_domain.entities;
+using ERP_infrastructure.services;
 
 namespace ERP_infrastructure.data
 {
     public class TenantErpDbContext : DbContext
     {
-        public TenantErpDbContext(DbContextOptions<TenantErpDbContext> options)
+        private readonly ICurrentUserAccessor? _actor;
+
+        /// <summary>
+        /// The accessor is optional so the design-time factories, the WinForms host and the
+        /// tests construct this context exactly as they did before. Without one, changes are
+        /// still saved; they are simply not attributed, which is the correct behaviour for a
+        /// migration or a fixture.
+        ///
+        /// It is taken as a constructor argument rather than registered as an interceptor on
+        /// DbContextOptions because those options are cached per connection string for the life
+        /// of the process - an interceptor attached there would outlive the request and could
+        /// attribute one tenant's write to another tenant's user.
+        /// </summary>
+        public TenantErpDbContext(
+            DbContextOptions<TenantErpDbContext> options,
+            ICurrentUserAccessor? actor = null)
             : base(options)
         {
+            _actor = actor;
         }
+
+        public DbSet<AuditEvent> AuditEvents => Set<AuditEvent>();
 
         // Existing DbSets
         public DbSet<Customer> Customers => Set<Customer>();
@@ -57,17 +76,72 @@ namespace ERP_infrastructure.data
             }
         }
 
+        /// <summary>
+        /// Guards against the audit write auditing itself, which would not terminate.
+        /// </summary>
+        private bool _writingAudit;
+
         public override int SaveChanges()
         {
             StampAuditFields();
-            return base.SaveChanges();
+
+            if (_writingAudit || _actor is null) return base.SaveChanges();
+
+            var drafts = AuditCapture.Collect(ChangeTracker, _actor.Current);
+            var result = base.SaveChanges();
+
+            if (drafts.Count > 0) WriteAudit(drafts);
+
+            return result;
         }
 
-        public override Task<int> SaveChangesAsync(
+        public override async Task<int> SaveChangesAsync(
             bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
         {
             StampAuditFields();
-            return base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+
+            if (_writingAudit || _actor is null)
+            {
+                return await base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+            }
+
+            // Collected before saving, while the tracker still holds original values and the
+            // rows being deleted still exist.
+            var drafts = AuditCapture.Collect(ChangeTracker, _actor.Current);
+
+            var result = await base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+
+            if (drafts.Count > 0)
+            {
+                // Finalised afterwards, because an inserted row has no identity value until the
+                // insert has run.
+                _writingAudit = true;
+                try
+                {
+                    AuditEvents.AddRange(AuditCapture.Finalise(drafts));
+                    await base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+                }
+                finally
+                {
+                    _writingAudit = false;
+                }
+            }
+
+            return result;
+        }
+
+        private void WriteAudit(List<AuditCapture.Draft> drafts)
+        {
+            _writingAudit = true;
+            try
+            {
+                AuditEvents.AddRange(AuditCapture.Finalise(drafts));
+                base.SaveChanges();
+            }
+            finally
+            {
+                _writingAudit = false;
+            }
         }
 
         protected override void OnModelCreating(ModelBuilder builder)
@@ -75,6 +149,7 @@ namespace ERP_infrastructure.data
             base.OnModelCreating(builder);
 
             // Existing configurations...
+            builder.ConfigureAuditEvents();
             ConfigureProducts(builder);
             ConfigureSuppliers(builder);
             ConfigureInventory(builder);

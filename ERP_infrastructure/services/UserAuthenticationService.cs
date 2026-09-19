@@ -12,15 +12,18 @@ namespace ERP_infrastructure.services
         private readonly MasterErpDbContext _master;
         private readonly IPasswordHasher<AppUser> _passwordHasher;
         private readonly ILogger<UserAuthenticationService> _logger;
+        private readonly IAuthAuditService _audit;
 
         public UserAuthenticationService(
             MasterErpDbContext master,
             IPasswordHasher<AppUser> passwordHasher,
-            ILogger<UserAuthenticationService> logger)
+            ILogger<UserAuthenticationService> logger,
+            IAuthAuditService audit)
         {
             _master = master;
             _passwordHasher = passwordHasher;
             _logger = logger;
+            _audit = audit;
         }
 
         public async Task<LoginResult> AuthenticateAsync(
@@ -44,6 +47,15 @@ namespace ERP_infrastructure.services
                 _passwordHasher.HashPassword(new AppUser(), password ?? string.Empty);
 
                 _logger.LogInformation("Rejected sign-in for an unknown account name.");
+
+                // Recorded without the name that was tried: a trail an administrator reads
+                // should not become a list of guessed usernames. The count is the signal.
+                await _audit.RecordAsync(
+                    AuditActions.LoginFailed,
+                    AuditActor.System,
+                    "Sign-in attempt for an account name that does not exist",
+                    cancellationToken);
+
                 return LoginResult.Fail(LoginFailureReason.InvalidCredentials);
             }
 
@@ -55,6 +67,9 @@ namespace ERP_infrastructure.services
                 _logger.LogInformation(
                     "Rejected sign-in for {Username}: wrong password.", user.Username);
 
+                await _audit.RecordAsync(
+                    AuditActions.LoginFailed, ActorFor(user), "Wrong password", cancellationToken);
+
                 return LoginResult.Fail(LoginFailureReason.InvalidCredentials);
             }
 
@@ -65,6 +80,10 @@ namespace ERP_infrastructure.services
                 _logger.LogWarning(
                     "Rejected sign-in for {Username}: the account is deactivated.", user.Username);
 
+                await _audit.RecordAsync(
+                    AuditActions.LoginFailed, ActorFor(user),
+                    "Account is deactivated", cancellationToken);
+
                 return LoginResult.Fail(LoginFailureReason.AccountDeactivated);
             }
 
@@ -73,6 +92,10 @@ namespace ERP_infrastructure.services
                 _logger.LogWarning(
                     "Rejected sign-in for {Username}: company {CompanyId} is inactive.",
                     user.Username, user.CompanyId);
+
+                await _audit.RecordAsync(
+                    AuditActions.LoginFailed, ActorFor(user),
+                    "Company is inactive", cancellationToken);
 
                 return LoginResult.Fail(LoginFailureReason.CompanyInactive);
             }
@@ -89,8 +112,20 @@ namespace ERP_infrastructure.services
                 "{Username} signed in to company {CompanyId} as {Role}.",
                 user.Username, user.CompanyId, user.Role.RoleKey);
 
+            await _audit.RecordAsync(
+                AuditActions.Login, ActorFor(user),
+                $"Signed in as {ErpRoles.DisplayNameOf(user.Role.RoleKey)}", cancellationToken);
+
             return LoginResult.Success(Project(user));
         }
+
+        /// <summary>
+        /// The actor for a sign-in event. It cannot come from the request, because the point of
+        /// the event is that the caller is not signed in yet.
+        /// </summary>
+        private static AuditActor ActorFor(AppUser user) =>
+            new(user.AppUserId, user.Username, user.Role?.RoleKey ?? "",
+                user.CompanyId, null, null);
 
         public async Task<AuthenticatedUser?> GetAuthenticatedUserAsync(
             int appUserId, CancellationToken cancellationToken = default)
@@ -139,6 +174,13 @@ namespace ERP_infrastructure.services
             await _master.SaveChangesAsync(cancellationToken);
 
             _logger.LogInformation("{Username} changed their password.", user.Username);
+
+            // The automatic sweep records that AppUser changed, but it excludes PasswordHash
+            // from the values - so without this the trail would show an edit with nothing in it.
+            await _audit.RecordAsync(
+                AuditActions.PasswordChanged, ActorFor(user),
+                "Changed their own password", cancellationToken);
+
             return true;
         }
 
