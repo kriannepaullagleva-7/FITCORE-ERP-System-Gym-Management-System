@@ -39,12 +39,16 @@ namespace ERP_infrastructure.repositories
         public async Task<bool> PeriodExistsAsync(
             int employeeId, DateTime periodStart, DateTime periodEnd, int? excludePayrollId = null)
         {
-            // Two runs for the same employee covering the same period is almost always a
-            // double entry, so the service refuses it.
+            // Any overlap, not just an identical pair of dates. Matching the dates exactly let
+            // 1-15 March and 10-20 March both be paid, which pays the same six days twice -
+            // and that is the mistake worth catching, since the money has already gone out by
+            // the time anyone reconciles it.
+            //
+            // Two periods overlap when each starts before the other ends.
             return await _dbSet.AnyAsync(p =>
                 p.EmployeeId == employeeId &&
-                p.PeriodStart == periodStart &&
-                p.PeriodEnd == periodEnd &&
+                p.PeriodStart <= periodEnd &&
+                p.PeriodEnd >= periodStart &&
                 (excludePayrollId == null || p.PayrollId != excludePayrollId.Value));
         }
     }

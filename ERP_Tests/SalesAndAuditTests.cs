@@ -463,6 +463,86 @@ public class PayrollCalculationTests
         var failure = await Assert.ThrowsAnyAsync<Exception>(() =>
             h.Payroll.CreatePayrollAsync(employee.EmployeeId, start, end, null, 0m, 0m, 0m, 0m, ""));
 
-        Assert.Contains("already exists", failure.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("overlapping", failure.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Matching the dates exactly was not enough: 1-15 March and 10-20 March are different
+    /// periods but share six days, and paying both pays those days twice. By the time anyone
+    /// reconciles it the money has gone out, so this is refused up front.
+    /// </summary>
+    [Theory]
+    // starts inside the existing run
+    [InlineData(10, 20)]
+    // ends inside it
+    [InlineData(1, 5)]
+    // swallows it whole
+    [InlineData(1, 30)]
+    // sits entirely within it
+    [InlineData(3, 8)]
+    // shares only the last day
+    [InlineData(15, 25)]
+    public async Task An_overlapping_payroll_period_is_refused(int startDay, int endDay)
+    {
+        using var h = new Harness();
+        var employee = await SeedEmployeeAsync(h);
+
+        await h.Payroll.CreatePayrollAsync(
+            employee.EmployeeId,
+            new DateTime(2026, 11, 2), new DateTime(2026, 11, 15),
+            null, 0m, 0m, 0m, 0m, "");
+
+        var failure = await Assert.ThrowsAnyAsync<Exception>(() =>
+            h.Payroll.CreatePayrollAsync(
+                employee.EmployeeId,
+                new DateTime(2026, 11, startDay), new DateTime(2026, 11, endDay),
+                null, 0m, 0m, 0m, 0m, ""));
+
+        Assert.Contains("overlapping", failure.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// The guard must not be so eager that consecutive periods become impossible to pay.
+    /// </summary>
+    [Fact]
+    public async Task Consecutive_payroll_periods_are_allowed()
+    {
+        using var h = new Harness();
+        var employee = await SeedEmployeeAsync(h);
+
+        await h.Payroll.CreatePayrollAsync(
+            employee.EmployeeId,
+            new DateTime(2026, 11, 1), new DateTime(2026, 11, 15),
+            null, 0m, 0m, 0m, 0m, "");
+
+        var second = await h.Payroll.CreatePayrollAsync(
+            employee.EmployeeId,
+            new DateTime(2026, 11, 16), new DateTime(2026, 11, 30),
+            null, 0m, 0m, 0m, 0m, "");
+
+        Assert.True(second.PayrollId > 0);
+    }
+
+    /// <summary>
+    /// Two employees are paid for the same fortnight every fortnight; the overlap rule is per
+    /// employee, not per period.
+    /// </summary>
+    [Fact]
+    public async Task A_different_employee_may_share_the_same_period()
+    {
+        using var h = new Harness();
+        var first = await SeedEmployeeAsync(h);
+
+        var second = await h.Employees.CreateEmployeeAsync(
+            "EMP-2", "Paolo", "Cruz", "Trainer", "Gym",
+            "555-2", "paolo@example.com", new DateTime(2026, 2, 1), 25000m);
+
+        var start = new DateTime(2026, 11, 1);
+        var end = new DateTime(2026, 11, 15);
+
+        await h.Payroll.CreatePayrollAsync(first.EmployeeId, start, end, null, 0m, 0m, 0m, 0m, "");
+        var run = await h.Payroll.CreatePayrollAsync(second.EmployeeId, start, end, null, 0m, 0m, 0m, 0m, "");
+
+        Assert.True(run.PayrollId > 0);
     }
 }

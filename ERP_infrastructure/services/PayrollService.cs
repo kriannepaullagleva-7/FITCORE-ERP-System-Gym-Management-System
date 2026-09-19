@@ -104,7 +104,8 @@ namespace ERP_infrastructure.services
             if (await _repository.PeriodExistsAsync(employeeId, periodStart, periodEnd))
             {
                 throw new ValidationException(
-                    "A payroll run already exists for this employee and period.");
+                    "This employee already has a payroll run overlapping these dates. " +
+                    "Paying an overlapping period would pay the same days twice.");
             }
 
             // Falls back to the employee's current salary when the caller does not override it.
@@ -171,7 +172,7 @@ namespace ERP_infrastructure.services
             if (await _repository.PeriodExistsAsync(payroll.EmployeeId, periodStart, periodEnd, id))
             {
                 throw new ValidationException(
-                    "Another payroll run already covers this employee and period.");
+                    "Another payroll run for this employee overlaps these dates.");
             }
 
             var overtimePay = overtimeHours * overtimeRate;
