@@ -360,11 +360,19 @@
 <ConfirmDialog IsOpen="pendingDelete is not null"
                Title="Delete this member?"
                Message="@($"{pendingDelete?.FullName} will be removed from the database.")"
-               Warning="A member with subscriptions, payments or sales cannot be deleted. The server will refuse and tell you to deactivate them instead."
+               Warning="A member with subscriptions, payments or sales cannot be deleted, because that would take the gym's takings with them. If they have any history you will be offered the option to archive them instead."
                ConfirmText="Delete member"
                IsBusy="isDeleting"
                OnConfirm="ConfirmDeleteAsync"
                OnCancel="() => pendingDelete = null" />
+
+<ConfirmDialog IsOpen="pendingArchive is not null"
+               Title="Archive this member instead?"
+               Message="@($"{pendingArchive?.FullName} has subscriptions, payments or sales on record, so they cannot be deleted. Archiving removes them from the active list and keeps every one of those records intact.")"
+               ConfirmText="Archive member"
+               IsBusy="isArchiving"
+               OnConfirm="ConfirmArchiveAsync"
+               OnCancel="() => pendingArchive = null" />
 
 @code {
     private readonly List<PageHeader.Crumb> crumbs = new() { new("Membership"), new("Members") };
@@ -400,6 +408,8 @@
 
     private MembershipOverviewDto? detail;
     private MembershipOverviewDto? pendingDelete;
+    private MembershipOverviewDto? pendingArchive;
+    private bool isArchiving;
     private bool isDeleting;
 
     protected override Task OnInitializedAsync() => ReloadAsync();
@@ -609,6 +619,16 @@
 
         if (!result.IsSuccess)
         {
+            // The server refuses to delete anyone who has ever paid, subscribed or bought
+            // something, because that history is the gym's takings. Offer the thing they
+            // actually want instead of leaving them at a dead end.
+            if (result.StatusCode == System.Net.HttpStatusCode.Conflict)
+            {
+                pendingArchive = pendingDelete;
+                pendingDelete = null;
+                return;
+            }
+
             pageError = result.ErrorMessage;
             pendingDelete = null;
             return;
@@ -616,6 +636,32 @@
 
         Toasts.Success($"{pendingDelete.FullName} was deleted.", "Member removed");
         pendingDelete = null;
+
+        await ReloadAsync();
+    }
+
+    private async Task ConfirmArchiveAsync()
+    {
+        if (pendingArchive is null) return;
+
+        isArchiving = true;
+
+        var result = await MemberApi.ArchiveAsync(pendingArchive.MemberId);
+
+        isArchiving = false;
+
+        if (!result.IsSuccess)
+        {
+            pageError = result.ErrorMessage;
+            pendingArchive = null;
+            return;
+        }
+
+        Toasts.Success(
+            $"{pendingArchive.FullName} was archived. Their history is unchanged.",
+            "Member archived");
+
+        pendingArchive = null;
 
         await ReloadAsync();
     }

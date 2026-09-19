@@ -33,5 +33,15 @@ namespace ERP_UI.Services
 
         public Task<ApiResult<object>> DeleteAsync(int id) =>
             SendAsync<object>(() => Http.DeleteAsync($"{BasePath}/{id}"));
+
+        /// <summary>
+        /// Retires a member without touching their subscriptions or payments. This is what the
+        /// Members screen offers when a delete is refused because the member has history.
+        /// </summary>
+        public Task<ApiResult<MemberDto>> ArchiveAsync(int id) =>
+            SendAsync<MemberDto>(() => Http.PostAsync($"{BasePath}/{id}/archive", null));
+
+        public Task<ApiResult<MemberDto>> RestoreAsync(int id) =>
+            SendAsync<MemberDto>(() => Http.PostAsync($"{BasePath}/{id}/restore", null));
     }
 }
