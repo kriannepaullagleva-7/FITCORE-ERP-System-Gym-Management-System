@@ -169,8 +169,14 @@ namespace ERP_UI.DTOs
         public const string Inventory  = "inventory";
         public const string Employees  = "employees";
         public const string Payroll    = "payroll";
-        public const string Expenses   = "expenses";
         public const string Reports    = "reports";
+
+        // Medium tier. Mirrors ERP_domain.entities.ErpModules; the server is authoritative and
+        // answers 403 regardless of what the browser believes.
+        public const string Expenses   = "expenses";
+        public const string Finance    = "finance";
+        public const string BusinessIntelligence = "businessintelligence";
         public const string UserAccess = "useraccess";
+        public const string SystemAdmin = "systemadmin";
     }
 }

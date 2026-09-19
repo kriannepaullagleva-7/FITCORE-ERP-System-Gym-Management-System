@@ -11,17 +11,22 @@ namespace ERP_api.Controllers
     /// company database lives, and which devices belong to a company. This is the only
     /// controller that touches the master database.
     ///
-    /// Every action addresses tenants by id, so it is guarded twice over: the caller must hold
-    /// the User Access module and the Admin role, and cross-tenant administration must be
-    /// switched on for the deployment. A manager of one company therefore cannot read the
-    /// registry of another, and nobody can reach it at all on a deployment where the flag is
-    /// off.
+    /// Every action addresses tenants by id, so it is guarded three times over: the caller must
+    /// hold the System Administration module, must be an owner or a super admin, and
+    /// cross-tenant administration must be switched on for the deployment. A manager of one
+    /// company therefore cannot read the registry of another, and nobody can reach it at all on
+    /// a deployment where the flag is off.
+    ///
+    /// System Administration is a Medium-tier module held by Super Admin, so on a Micro or
+    /// Small deployment this controller answers 403 to everyone. Registering and provisioning
+    /// tenants there is a deployment activity, done through the Bootstrap configuration section
+    /// rather than over HTTP.
     /// </summary>
     [ApiController]
     [Route("api/companies")]
     [Produces("application/json")]
-    [Authorize(Roles = ErpRoles.Admin)]
-    [RequireModule(ErpModules.UserAccess)]
+    [Authorize(Roles = ErpRoles.Admin + "," + ErpRoles.SuperAdmin)]
+    [RequireModule(ErpModules.SystemAdmin)]
     [CrossTenantAdmin]
     public class CompaniesController : ControllerBase
     {

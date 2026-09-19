@@ -97,7 +97,13 @@ namespace ERP_infrastructure.services
                 .Include(r => r.Permissions)
                 .ToDictionaryAsync(r => r.RoleKey, StringComparer.OrdinalIgnoreCase, cancellationToken);
 
-            foreach (var roleKey in new[] { ErpRoles.Admin, ErpRoles.Manager, ErpRoles.Staff })
+            // Super Admin is seeded so the role exists and can be assigned, but no account is
+            // created for it here: platform administration is granted deliberately, not by
+            // default. Existing roles keep the grants they already carry - the tier ceiling in
+            // PermissionResolver is what stops a stale grant such as a Medium module on a Micro
+            // company from ever taking effect, so no permission rows need rewriting.
+            foreach (var roleKey in new[]
+                     { ErpRoles.SuperAdmin, ErpRoles.Admin, ErpRoles.Manager, ErpRoles.Staff })
             {
                 if (!existing.TryGetValue(roleKey, out var role))
                 {

@@ -44,14 +44,20 @@ namespace ERP_UI.Services
 
             new NavGroup("Insight", new[]
             {
-                new NavEntry("Expenses", "fitcore/expenses", "expense", Modules.Expenses),
-                new NavEntry("Reports",  "fitcore/reports",  "reports", Modules.Reports)
+                new NavEntry("Reports", "fitcore/reports", "reports", Modules.Reports)
+            }),
+
+            // Medium tier. These entries are invisible to a Micro or Small company because no
+            // user there can hold the module, whatever their role - the tier is the ceiling.
+            new NavGroup("Finance", new[]
+            {
+                new NavEntry("Expenses", "fitcore/expenses", "expense", Modules.Expenses)
             }),
 
             new NavGroup("System", new[]
             {
                 new NavEntry("User Access",   "fitcore/user-access",    "shield", Modules.UserAccess),
-                new NavEntry("Administration","fitcore/administration", "admin",  Modules.UserAccess)
+                new NavEntry("Administration","fitcore/administration", "admin",  Modules.SystemAdmin)
             })
         };
 

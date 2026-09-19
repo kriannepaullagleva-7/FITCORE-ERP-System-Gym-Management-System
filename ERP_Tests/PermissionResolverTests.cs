@@ -46,7 +46,10 @@ namespace ERP_Tests
 
             Assert.Contains(ErpModules.Employees, modules);
             Assert.Contains(ErpModules.Payroll, modules);
-            Assert.Contains(ErpModules.UserAccess, modules);
+
+            // User Access is a Medium module, so even the owner of a Small tenant does not
+            // reach it. Accounts for Micro and Small are provisioned by the Bootstrap seeder.
+            Assert.DoesNotContain(ErpModules.UserAccess, modules);
         }
 
         [Fact]
@@ -96,6 +99,105 @@ namespace ERP_Tests
                 new[] { Override(ErpModules.Payroll, granted: true) });
 
             Assert.DoesNotContain(ErpModules.Payroll, modules);
+        }
+
+        /// <summary>
+        /// The FitCore licensing matrix in full. Micro is the four operational modules plus
+        /// Dashboard and Reports and nothing else - in particular neither Expenses nor User
+        /// Access, which are Medium.
+        /// </summary>
+        [Fact]
+        public void A_micro_tenant_gets_exactly_the_micro_matrix()
+        {
+            var modules = PermissionResolver.Resolve(
+                EnterpriseTier.Micro,
+                ErpRoles.DefaultModulesFor(ErpRoles.Admin),
+                Array.Empty<AppUserPermission>());
+
+            Assert.Equal(
+                new[]
+                {
+                    ErpModules.Dashboard, ErpModules.Membership, ErpModules.Sales,
+                    ErpModules.Payments, ErpModules.Inventory, ErpModules.Reports
+                },
+                modules);
+        }
+
+        /// <summary>
+        /// Small is Micro plus exactly the workforce pair. Nothing from the Medium tier leaks in.
+        /// </summary>
+        [Fact]
+        public void A_small_tenant_gets_exactly_the_small_matrix()
+        {
+            var modules = PermissionResolver.Resolve(
+                EnterpriseTier.Small,
+                ErpRoles.DefaultModulesFor(ErpRoles.Admin),
+                Array.Empty<AppUserPermission>());
+
+            Assert.Equal(
+                new[]
+                {
+                    ErpModules.Dashboard, ErpModules.Membership, ErpModules.Sales,
+                    ErpModules.Payments, ErpModules.Inventory,
+                    ErpModules.Employees, ErpModules.Payroll, ErpModules.Reports
+                },
+                modules);
+        }
+
+        [Theory]
+        [InlineData(ErpModules.Expenses)]
+        [InlineData(ErpModules.Finance)]
+        [InlineData(ErpModules.BusinessIntelligence)]
+        [InlineData(ErpModules.UserAccess)]
+        [InlineData(ErpModules.SystemAdmin)]
+        public void No_medium_module_reaches_a_micro_or_small_tenant(string mediumModule)
+        {
+            foreach (var tier in new[] { EnterpriseTier.Micro, EnterpriseTier.Small })
+            {
+                // Senior role, and an explicit grant on top. Neither may defeat the tier.
+                var modules = PermissionResolver.Resolve(
+                    tier,
+                    ErpRoles.DefaultModulesFor(ErpRoles.SuperAdmin),
+                    new[] { Override(mediumModule, granted: true) });
+
+                Assert.DoesNotContain(mediumModule, modules);
+            }
+        }
+
+        [Fact]
+        public void A_medium_tenant_reaches_the_medium_modules()
+        {
+            var modules = PermissionResolver.Resolve(
+                EnterpriseTier.Medium,
+                ErpRoles.DefaultModulesFor(ErpRoles.SuperAdmin),
+                Array.Empty<AppUserPermission>());
+
+            Assert.Contains(ErpModules.Expenses, modules);
+            Assert.Contains(ErpModules.Finance, modules);
+            Assert.Contains(ErpModules.BusinessIntelligence, modules);
+            Assert.Contains(ErpModules.UserAccess, modules);
+            Assert.Contains(ErpModules.SystemAdmin, modules);
+        }
+
+        /// <summary>
+        /// System Administration is the Super Admin's alone, even on a Medium tenant where the
+        /// tier allows it. An owner runs their company; a super admin runs the platform.
+        /// </summary>
+        [Fact]
+        public void System_administration_is_reserved_for_super_admin()
+        {
+            var admin = PermissionResolver.Resolve(
+                EnterpriseTier.Medium,
+                ErpRoles.DefaultModulesFor(ErpRoles.Admin),
+                Array.Empty<AppUserPermission>());
+
+            var superAdmin = PermissionResolver.Resolve(
+                EnterpriseTier.Medium,
+                ErpRoles.DefaultModulesFor(ErpRoles.SuperAdmin),
+                Array.Empty<AppUserPermission>());
+
+            Assert.DoesNotContain(ErpModules.SystemAdmin, admin);
+            Assert.Contains(ErpModules.SystemAdmin, superAdmin);
         }
 
         // ------------------------------------------------------------------ overrides
