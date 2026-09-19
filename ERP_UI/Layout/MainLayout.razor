@@ -1,0 +1,296 @@
+@*
+    The application shell: a fixed sidebar, a topbar that reports which page you are on and
+    who you are signed in as, and the page body.
+
+    The sidebar collapses to icons on a desktop and becomes a drawer below 900px, so the same
+    layout survives a small laptop window without the tables losing their space.
+*@
+
+@inherits LayoutComponentBase
+@implements IDisposable
+@inject NavigationManager Nav
+@inject AuthApiService Auth
+@inject ReportsApiService ReportsApi
+
+<div class="fc-shell">
+    <aside class="fc-sidebar @(isCollapsed ? "is-collapsed" : "") @(isDrawerOpen ? "is-open" : "")">
+        <NavMenu OnNavigate="CloseDrawer" OnSignOut="SignOutAsync" />
+    </aside>
+
+    @if (isDrawerOpen)
+    {
+        <div class="fc-sidebar-scrim" @onclick="CloseDrawer"></div>
+    }
+
+    <div class="fc-main">
+        <header class="fc-topbar">
+            <button type="button" class="fc-icon-btn" @onclick="ToggleSidebar"
+                    title="Toggle navigation" aria-label="Toggle navigation">
+                <Icon Name="menu" Size="19" />
+            </button>
+
+            <div class="fc-topbar-heading">
+                <div class="fc-topbar-title">@PageTitle</div>
+                @if (Breadcrumb is not null)
+                {
+                    <div class="fc-crumb fc-hide-sm">
+                        <span>@Breadcrumb</span>
+                        <Icon Name="chevron-right" Size="11" />
+                        <span class="fc-crumb-current">@PageTitle</span>
+                    </div>
+                }
+            </div>
+
+            <div class="fc-topbar-spacer"></div>
+
+            @if (user is not null)
+            {
+                <span class="fc-chip fc-hide-md" title="The server decides which company database you are served from.">
+                    <Icon Name="building" Size="13" />
+                    @user.CompanyName
+                    <span class="fc-badge tone-blue no-dot">@user.EnterpriseTier</span>
+                </span>
+            }
+
+            <div class="fc-menu-wrap">
+                <button type="button" class="fc-icon-btn" title="Notifications" aria-label="Notifications"
+                        @onclick="ToggleAlerts">
+                    <Icon Name="bell" Size="18" />
+                    @if (alerts.Count > 0)
+                    {
+                        <span class="fc-dot"></span>
+                    }
+                </button>
+
+                @if (showAlerts)
+                {
+                    <div class="fc-backdrop-transparent" @onclick="CloseMenus"></div>
+                    <div class="fc-menu">
+                        <div class="fc-menu-head">
+                            <div class="fc-strong fc-small">Attention needed</div>
+                            <div class="fc-xs fc-muted">Live figures from your database</div>
+                        </div>
+
+                        @if (alerts.Count == 0)
+                        {
+                            <div class="fc-menu-item fc-muted">Nothing needs attention right now.</div>
+                        }
+                        else
+                        {
+                            @foreach (var alert in alerts)
+                            {
+                                <a class="fc-menu-item" href="@alert.Href" @onclick="CloseMenus">
+                                    <Icon Name="@alert.Icon" Size="15" />
+                                    <span>@alert.Text</span>
+                                </a>
+                            }
+                        }
+                    </div>
+                }
+            </div>
+
+            <div class="fc-menu-wrap">
+                <button type="button" class="fc-user" @onclick="ToggleProfile" aria-label="Account menu">
+                    <span class="fc-avatar">@(user?.Initials ?? "FC")</span>
+                    <span class="fc-user-meta">
+                        <span class="fc-user-name">@(user?.FullName ?? "Signed out")</span>
+                        <span class="fc-user-role">@(user?.RoleDisplayName ?? "")</span>
+                    </span>
+                    <Icon Name="arrow-down" Size="13" />
+                </button>
+
+                @if (showProfile)
+                {
+                    <div class="fc-backdrop-transparent" @onclick="CloseMenus"></div>
+                    <div class="fc-menu">
+                        <div class="fc-menu-head">
+                            <div class="fc-strong fc-small">@user?.FullName</div>
+                            <div class="fc-xs fc-muted">
+                                @user?.RoleDisplayName &middot; @user?.Username
+                            </div>
+                            <div class="fc-xs fc-muted">@user?.CompanyName</div>
+                        </div>
+
+                        <a class="fc-menu-item" href="fitcore/account" @onclick="CloseMenus">
+                            <Icon Name="user" Size="15" /> My profile
+                        </a>
+
+                        @if (Auth.Can(Modules.UserAccess))
+                        {
+                            <a class="fc-menu-item" href="fitcore/user-access" @onclick="CloseMenus">
+                                <Icon Name="shield" Size="15" /> User Access
+                            </a>
+                        }
+
+                        <button type="button" class="fc-menu-item is-danger" @onclick="SignOutAsync">
+                            <Icon Name="logout" Size="15" /> Sign out
+                        </button>
+                    </div>
+                }
+            </div>
+        </header>
+
+        @if (user?.MustChangePassword == true)
+        {
+            <div class="fc-banner tone-amber">
+                <Icon Name="key" Size="16" />
+                <span>
+                    You are using a password that was set for you. Please
+                    <a href="fitcore/account">choose your own</a>.
+                </span>
+            </div>
+        }
+
+        <main class="fc-content">
+            @Body
+        </main>
+    </div>
+</div>
+
+@* The error banner itself lives in index.html, which is where the framework looks for it. *@
+<ToastHost />
+
+@code {
+    private bool isCollapsed;
+    private bool isDrawerOpen;
+    private bool showProfile;
+    private bool showAlerts;
+
+    private List<AlertItem> alerts = new();
+
+    private DTOs.CurrentUserDto? user => Auth.CurrentUser;
+
+    private record AlertItem(string Text, string Href, string Icon);
+
+    protected override async Task OnInitializedAsync()
+    {
+        Nav.LocationChanged += OnLocationChanged;
+        Auth.Changed += Redraw;
+
+        await LoadAlertsAsync();
+    }
+
+    public void Dispose()
+    {
+        Nav.LocationChanged -= OnLocationChanged;
+        Auth.Changed -= Redraw;
+    }
+
+    private void Redraw() => InvokeAsync(StateHasChanged);
+
+    private void OnLocationChanged(object? sender, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs e)
+    {
+        CloseMenus();
+        StateHasChanged();
+    }
+
+    private async Task SignOutAsync()
+    {
+        CloseMenus();
+        await Auth.LogoutAsync();
+        Nav.NavigateTo("login", replace: true);
+    }
+
+    /// <summary>
+    /// The bell reflects real conditions in the tenant database - stock that has run low,
+    /// memberships about to lapse, money outstanding - rather than a static count. Each entry
+    /// is suppressed unless the user can actually open the page it points at.
+    /// </summary>
+    private async Task LoadAlertsAsync()
+    {
+        if (!Auth.Can(Modules.Dashboard)) return;
+
+        var result = await ReportsApi.GetDashboardAsync();
+        if (!result.IsSuccess || result.Value is null) return;
+
+        var s = result.Value;
+        var list = new List<AlertItem>();
+
+        if (Auth.Can(Modules.Inventory))
+        {
+            if (s.OutOfStockProducts > 0)
+                list.Add(new($"{s.OutOfStockProducts} product(s) out of stock", "fitcore/inventory", "alert"));
+
+            if (s.LowStockProducts > 0)
+                list.Add(new($"{s.LowStockProducts} product(s) at or below reorder level", "fitcore/inventory", "box"));
+        }
+
+        if (Auth.Can(Modules.Membership))
+        {
+            if (s.ExpiringSoon > 0)
+                list.Add(new($"{s.ExpiringSoon} membership(s) expiring soon", "fitcore/subscriptions", "subscription"));
+
+            if (s.ExpiredSubscriptions > 0)
+                list.Add(new($"{s.ExpiredSubscriptions} membership(s) have expired", "fitcore/subscriptions", "ban"));
+        }
+
+        if (Auth.Can(Modules.Payments))
+        {
+            if (s.OutstandingBalance > 0)
+                list.Add(new($"{s.OutstandingBalance:N2} still outstanding", "fitcore/payments", "money"));
+
+            if (s.PendingPayments > 0)
+                list.Add(new($"{s.PendingPayments} payment(s) pending", "fitcore/payments", "payment"));
+        }
+
+        alerts = list;
+        StateHasChanged();
+    }
+
+    private string CurrentPath =>
+        Nav.ToBaseRelativePath(Nav.Uri).Split('?')[0].Trim('/');
+
+    /// <summary>
+    /// Derives the topbar heading from the route, so a page never has to remember to set it
+    /// and the two can never disagree.
+    /// </summary>
+    private string PageTitle => CurrentPath switch
+    {
+        "" => "Dashboard",
+        "fitcore/account" => "My Profile",
+        "fitcore/administration" => "System Administration",
+        var path => NavigationCatalogue.TitleForPath(path)
+    };
+
+    /// <summary>The section the current page sits in, shown as a breadcrumb.</summary>
+    private string? Breadcrumb
+    {
+        get
+        {
+            var path = CurrentPath;
+
+            return NavigationCatalogue.Groups
+                .FirstOrDefault(g => g.Entries.Any(e =>
+                    string.Equals(e.Href, path, StringComparison.OrdinalIgnoreCase)))
+                ?.Title;
+        }
+    }
+
+    private void ToggleSidebar()
+    {
+        // The same button collapses the rail on a wide screen and opens the drawer on a
+        // narrow one; the CSS decides which of the two classes is meaningful.
+        isCollapsed = !isCollapsed;
+        isDrawerOpen = !isDrawerOpen;
+    }
+
+    private void CloseDrawer() => isDrawerOpen = false;
+
+    private void ToggleProfile()
+    {
+        showProfile = !showProfile;
+        showAlerts = false;
+    }
+
+    private void ToggleAlerts()
+    {
+        showAlerts = !showAlerts;
+        showProfile = false;
+    }
+
+    private void CloseMenus()
+    {
+        showProfile = false;
+        showAlerts = false;
+    }
+}

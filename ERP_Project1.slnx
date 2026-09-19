@@ -1,0 +1,8 @@
+<Solution>
+  <Project Path="ERP_Project1/ERP_winforms.csproj" />
+  <Project Path="ERP_api/ERP_api.csproj" Id="e35dc5d4-3db4-4a1c-b73e-7fed7a492061" />
+  <Project Path="ERP_domain/ERP_domain.csproj" Id="ba5134c5-f3fd-4c2e-90fc-e90f2e049148" />
+  <Project Path="ERP_infrastructure/ERP_infrastructure.csproj" Id="5f037f10-0ae0-4290-8245-1d119d2457f0" />
+  <Project Path="ERP_UI/ERP_UI.csproj" />
+  <Project Path="ERP_Tests/ERP_Tests.csproj" />
+</Solution>

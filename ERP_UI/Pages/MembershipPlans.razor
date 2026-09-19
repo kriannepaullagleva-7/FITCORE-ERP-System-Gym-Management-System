@@ -1,0 +1,462 @@
+@page "/fitcore/membership-plans"
+@inject MembershipPlanApiService PlanApi
+@inject SubscriptionApiService SubscriptionApi
+@inject ToastService Toasts
+
+@*
+    Membership plans: the catalogue every subscription is sold from. A plan that members are
+    already on is retired rather than deleted, so their history keeps pointing at something.
+*@
+
+<PageTitle>Membership Plans - FitCore ERP</PageTitle>
+
+<PageHeader Title="Membership Plans"
+            Description="The plans members can subscribe to, with their duration and price."
+            Crumbs="crumbs">
+    <Actions>
+        <button class="fc-btn fc-btn-secondary" @onclick="ReloadAsync" disabled="@isLoading">
+            <Icon Name="refresh" Size="15" /> Refresh
+        </button>
+        <button class="fc-btn fc-btn-primary" @onclick="OpenCreate">
+            <Icon Name="plus" Size="15" /> Add plan
+        </button>
+    </Actions>
+</PageHeader>
+
+<Alert Message="@pageError" Kind="error" OnDismiss="() => pageError = null" />
+
+<div class="fc-kpi-grid">
+    <StatCard Label="Total plans" Value="@plans.Count.ToString("N0")" Icon="plan" Tone="blue" />
+    <StatCard Label="Active plans" Value="@plans.Count(p => p.IsActive).ToString("N0")"
+              Icon="check" Tone="green" />
+    <StatCard Label="Subscriptions sold" Value="@subscriptions.Count.ToString("N0")"
+              Hint="Across every plan" Icon="subscription" Tone="slate" />
+    <StatCard Label="Average price" Value="@AveragePrice.ToString("N2")"
+              Hint="Across active plans" Icon="money" Tone="blue" />
+</div>
+
+<div class="fc-filters">
+    <div class="fc-filter fc-filter-grow">
+        <label class="fc-label" for="plan-search">Search</label>
+        <div class="fc-search">
+            <Icon Name="search" Size="15" />
+            <input id="plan-search" class="fc-input" placeholder="Plan name or description"
+                   value="@searchTerm" @oninput="OnSearchInput" />
+        </div>
+    </div>
+
+    <div class="fc-filter">
+        <label class="fc-label" for="plan-state">Status</label>
+        <select id="plan-state" class="fc-select" @bind="statusFilter">
+            <option value="">All plans</option>
+            <option value="active">Active only</option>
+            <option value="inactive">Retired only</option>
+        </select>
+    </div>
+
+    <button class="fc-btn fc-btn-secondary" @onclick="ClearFilters">
+        <Icon Name="x" Size="14" /> Clear
+    </button>
+</div>
+
+<div class="fc-card">
+    <div class="fc-card-head">
+        <div>
+            <h3 class="fc-card-title">Plan catalogue</h3>
+            <p class="fc-card-sub">Showing @Filtered.Count of @plans.Count plan(s)</p>
+        </div>
+    </div>
+
+    <div class="fc-card-body is-flush">
+        @if (isLoading)
+        {
+            <LoadingState AsSkeleton="true" Rows="4" />
+        }
+        else if (plans.Count == 0)
+        {
+            <EmptyState Title="No plans yet"
+                        Message="A membership plan sets the duration and price a member subscribes at. Create one to get started."
+                        Icon="plan">
+                <Action>
+                    <button class="fc-btn fc-btn-primary" @onclick="OpenCreate">
+                        <Icon Name="plus" Size="15" /> Create the first plan
+                    </button>
+                </Action>
+            </EmptyState>
+        }
+        else if (Filtered.Count == 0)
+        {
+            <EmptyState Title="No plans match those filters" Icon="filter">
+                <Action>
+                    <button class="fc-btn fc-btn-secondary" @onclick="ClearFilters">Clear filters</button>
+                </Action>
+            </EmptyState>
+        }
+        else
+        {
+            <div class="fc-table-wrap">
+                <table class="fc-table">
+                    <thead>
+                        <tr>
+                            <SortableHeader State="table" Column="Id" Label="ID" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Column="Plan" Label="Plan" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Column="Duration" Label="Duration" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Column="Price" Label="Price" CssClass="fc-right" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Column="PerMonth" Label="Per month" CssClass="fc-right" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Column="Subscribers" Label="Subscribers" CssClass="fc-right" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Column="Status" Label="Status" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Label="Actions" CssClass="fc-right" />
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var plan in PageRows)
+                        {
+                            <tr class="@(plan.IsActive ? "" : "is-muted")">
+                                <td class="fc-id">#@plan.PlanId</td>
+                                <td>
+                                    <span class="fc-cell-strong">@plan.PlanName</span>
+                                    @if (!string.IsNullOrWhiteSpace(plan.Description))
+                                    {
+                                        <span class="fc-cell-sub">@plan.Description</span>
+                                    }
+                                </td>
+                                <td class="fc-nowrap">@plan.DurationMonths month(s)</td>
+                                <td class="fc-right fc-num fc-strong">@plan.Price.ToString("N2")</td>
+                                <td class="fc-right fc-num fc-muted">@PerMonth(plan).ToString("N2")</td>
+                                <td class="fc-right fc-num">@SubscriberCount(plan.PlanId).ToString("N0")</td>
+                                <td><StatusBadge Status="@(plan.IsActive ? "Active" : "Inactive")" /></td>
+                                <td class="fc-right">
+                                    <span class="fc-actions">
+                                        <button class="fc-act" title="Edit plan" @onclick="() => OpenEdit(plan)">
+                                            <Icon Name="edit" Size="14" />
+                                        </button>
+                                        <button class="fc-act is-danger" title="Delete plan"
+                                                @onclick="() => pendingDelete = plan">
+                                            <Icon Name="trash" Size="14" />
+                                        </button>
+                                    </span>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            <Pagination State="table" OnChanged="StateHasChanged" />
+        }
+    </div>
+</div>
+
+<Modal IsOpen="showEditor" Title="@(editingId is null ? "Add membership plan" : $"Edit plan #{editingId}")"
+       Subtitle="Members subscribe at the price stored here." OnClose="CloseEditor">
+    <ChildContent>
+        <Alert Message="@formError" Kind="error" />
+
+        <div class="fc-form-grid">
+            <div class="fc-field fc-span-2">
+                <label class="fc-label" for="plan-name">Plan name<span class="fc-req">*</span></label>
+                <input id="plan-name" class="fc-input @(Invalid(nameof(form.PlanName)))" @bind="form.PlanName"
+                       placeholder="e.g. Gold Annual" />
+                @if (fieldErrors.TryGetValue(nameof(form.PlanName), out var nameError))
+                {
+                    <span class="fc-error">@nameError</span>
+                }
+            </div>
+
+            <div class="fc-field">
+                <label class="fc-label" for="plan-duration">Duration in months<span class="fc-req">*</span></label>
+                <input id="plan-duration" type="number" min="1" step="1"
+                       class="fc-input @(Invalid(nameof(form.DurationMonths)))" @bind="form.DurationMonths" />
+                @if (fieldErrors.TryGetValue(nameof(form.DurationMonths), out var durationError))
+                {
+                    <span class="fc-error">@durationError</span>
+                }
+                else
+                {
+                    <span class="fc-hint">Sets how far the expiry date is pushed out.</span>
+                }
+            </div>
+
+            <div class="fc-field">
+                <label class="fc-label" for="plan-price">Price<span class="fc-req">*</span></label>
+                <input id="plan-price" type="number" min="0" step="0.01"
+                       class="fc-input @(Invalid(nameof(form.Price)))" @bind="form.Price" />
+                @if (fieldErrors.TryGetValue(nameof(form.Price), out var priceError))
+                {
+                    <span class="fc-error">@priceError</span>
+                }
+            </div>
+
+            <div class="fc-field fc-span-2">
+                <label class="fc-label" for="plan-description">Description</label>
+                <textarea id="plan-description" class="fc-textarea" @bind="form.Description"
+                          placeholder="What the plan includes"></textarea>
+            </div>
+
+            @if (editingId is not null)
+            {
+                <div class="fc-field fc-span-2">
+                    <label class="fc-check">
+                        <input type="checkbox" @bind="form.IsActive" />
+                        <span>Available for new subscriptions</span>
+                    </label>
+                    <span class="fc-hint">
+                        Clearing this retires the plan. Members already on it keep their subscription.
+                    </span>
+                </div>
+            }
+        </div>
+    </ChildContent>
+
+    <Footer>
+        <button class="fc-btn fc-btn-secondary" @onclick="CloseEditor" disabled="@isSaving">Cancel</button>
+        <button class="fc-btn fc-btn-success" @onclick="SaveAsync" disabled="@isSaving">
+            @if (isSaving)
+            {
+                <span class="fc-spinner is-sm"></span>
+            }
+            else
+            {
+                <Icon Name="check" Size="15" />
+            }
+            @(editingId is null ? "Create plan" : "Save changes")
+        </button>
+    </Footer>
+</Modal>
+
+<ConfirmDialog IsOpen="pendingDelete is not null"
+               Title="Delete this plan?"
+               Message="@($"\"{pendingDelete?.PlanName}\" will be removed from the catalogue.")"
+               Warning="A plan that members are subscribed to cannot be deleted. Retire it instead by clearing its active checkbox."
+               ConfirmText="Delete plan"
+               IsBusy="isDeleting"
+               OnConfirm="ConfirmDeleteAsync"
+               OnCancel="() => pendingDelete = null" />
+
+@code {
+    private readonly List<PageHeader.Crumb> crumbs = new() { new("Membership"), new("Membership Plans") };
+
+    private List<MembershipPlanDto> plans = new();
+    private List<SubscriptionDto> subscriptions = new();
+    private bool isLoading = true;
+    private string? pageError;
+
+    // Subscriber counts are looked up per row, so the sort selector uses the same lookup the
+    // column does rather than a duplicated count.
+    private TableState<MembershipPlanDto> table = null!;
+
+    private string searchTerm = "";
+    private string statusFilter = "";
+
+    private bool showEditor;
+    private int? editingId;
+    private UpdateMembershipPlanDto form = new();
+    private string? formError;
+    private Dictionary<string, string> fieldErrors = new();
+    private bool isSaving;
+
+    private MembershipPlanDto? pendingDelete;
+    private bool isDeleting;
+
+    protected override Task OnInitializedAsync()
+    {
+        table = new TableState<MembershipPlanDto>(defaultSort: "Price")
+            .Column("Id", p => p.PlanId)
+            .Column("Plan", p => p.PlanName)
+            .Column("Duration", p => p.DurationMonths)
+            .Column("Price", p => p.Price)
+            .Column("PerMonth", p => PerMonth(p))
+            .Column("Subscribers", p => SubscriberCount(p.PlanId))
+            .Column("Status", p => p.IsActive);
+
+        return ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        isLoading = true;
+        pageError = null;
+
+        var planResult = await PlanApi.GetAllAsync();
+
+        if (planResult.IsSuccess)
+        {
+            plans = planResult.Value ?? new();
+        }
+        else
+        {
+            pageError = planResult.ErrorMessage;
+        }
+
+        // Subscription counts come from the real subscription records, so the "subscribers"
+        // column and the delete guard agree with what the server will allow.
+        var subscriptionResult = await SubscriptionApi.GetAllAsync();
+        if (subscriptionResult.IsSuccess) subscriptions = subscriptionResult.Value ?? new();
+
+        isLoading = false;
+    }
+
+    private List<MembershipPlanDto> Filtered
+    {
+        get
+        {
+            IEnumerable<MembershipPlanDto> query = plans;
+
+            if (!string.IsNullOrWhiteSpace(searchTerm))
+            {
+                var term = searchTerm.Trim();
+                query = query.Where(p =>
+                    p.PlanName.Contains(term, StringComparison.OrdinalIgnoreCase) ||
+                    p.Description.Contains(term, StringComparison.OrdinalIgnoreCase));
+            }
+
+            query = statusFilter switch
+            {
+                "active" => query.Where(p => p.IsActive),
+                "inactive" => query.Where(p => !p.IsActive),
+                _ => query
+            };
+
+            return query.ToList();
+        }
+    }
+
+    /// <summary>The filtered plans, sorted and cut down to the page on screen.</summary>
+    private List<MembershipPlanDto> PageRows => table.Apply(Filtered);
+
+    private decimal AveragePrice
+    {
+        get
+        {
+            var active = plans.Where(p => p.IsActive).ToList();
+            return active.Count == 0 ? 0m : active.Average(p => p.Price);
+        }
+    }
+
+    private static decimal PerMonth(MembershipPlanDto plan) =>
+        plan.DurationMonths <= 0 ? plan.Price : plan.Price / plan.DurationMonths;
+
+    private int SubscriberCount(int planId) => subscriptions.Count(s => s.PlanId == planId);
+
+    private void OnSearchInput(ChangeEventArgs args) => searchTerm = args.Value?.ToString() ?? "";
+
+    private void ClearFilters()
+    {
+        searchTerm = "";
+        statusFilter = "";
+    }
+
+    private void OpenCreate()
+    {
+        editingId = null;
+        form = new UpdateMembershipPlanDto { DurationMonths = 1, IsActive = true };
+        fieldErrors = new();
+        formError = null;
+        showEditor = true;
+    }
+
+    private void OpenEdit(MembershipPlanDto plan)
+    {
+        editingId = plan.PlanId;
+        form = new UpdateMembershipPlanDto
+        {
+            PlanName = plan.PlanName,
+            DurationMonths = plan.DurationMonths,
+            Price = plan.Price,
+            Description = plan.Description,
+            IsActive = plan.IsActive
+        };
+        fieldErrors = new();
+        formError = null;
+        showEditor = true;
+    }
+
+    private void CloseEditor()
+    {
+        showEditor = false;
+        editingId = null;
+        formError = null;
+    }
+
+    private string Invalid(string field) => fieldErrors.ContainsKey(field) ? "is-invalid" : "";
+
+    private bool Validate()
+    {
+        fieldErrors = new();
+
+        if (string.IsNullOrWhiteSpace(form.PlanName))
+            fieldErrors[nameof(form.PlanName)] = "A plan name is required.";
+
+        if (form.DurationMonths < 1)
+            fieldErrors[nameof(form.DurationMonths)] = "A plan must run for at least one month.";
+
+        if (form.Price < 0)
+            fieldErrors[nameof(form.Price)] = "A price cannot be negative.";
+
+        return fieldErrors.Count == 0;
+    }
+
+    private async Task SaveAsync()
+    {
+        formError = null;
+
+        if (!Validate()) return;
+
+        isSaving = true;
+
+        bool succeeded;
+        string? message;
+
+        if (editingId is null)
+        {
+            var result = await PlanApi.CreateAsync(new CreateMembershipPlanDto
+            {
+                PlanName = form.PlanName,
+                DurationMonths = form.DurationMonths,
+                Price = form.Price,
+                Description = form.Description
+            });
+
+            succeeded = result.IsSuccess;
+            message = result.ErrorMessage;
+        }
+        else
+        {
+            var result = await PlanApi.UpdateAsync(editingId.Value, form);
+            succeeded = result.IsSuccess;
+            message = result.ErrorMessage;
+        }
+
+        isSaving = false;
+
+        if (!succeeded)
+        {
+            formError = message;
+            return;
+        }
+
+        Toasts.Success($"\"{form.PlanName}\" was {(editingId is null ? "created" : "updated")}.");
+        CloseEditor();
+        await ReloadAsync();
+    }
+
+    private async Task ConfirmDeleteAsync()
+    {
+        if (pendingDelete is null) return;
+
+        isDeleting = true;
+        var result = await PlanApi.DeleteAsync(pendingDelete.PlanId);
+        isDeleting = false;
+
+        if (!result.IsSuccess)
+        {
+            pageError = result.ErrorMessage;
+            pendingDelete = null;
+            return;
+        }
+
+        Toasts.Success($"\"{pendingDelete.PlanName}\" was deleted.", "Plan removed");
+        pendingDelete = null;
+        await ReloadAsync();
+    }
+}

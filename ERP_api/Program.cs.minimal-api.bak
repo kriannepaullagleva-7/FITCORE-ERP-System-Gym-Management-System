@@ -1,0 +1,704 @@
+using ERP_api.DTOs;
+using ERP_domain.entities;
+using ERP_infrastructure.data;
+using ERP_infrastructure.services;
+using ERP_infrastructure.repositories;
+using Microsoft.EntityFrameworkCore;
+
+var builder = WebApplication.CreateBuilder(args);
+
+// Add services to the container.
+builder.Services.AddDbContext<MasterErpDbContext>(options =>
+    options.UseSqlServer(
+        builder.Configuration.GetConnectionString("MasterErp")));
+builder.Services.AddDbContext<TenantErpDbContext>(options =>
+  options.UseSqlServer(
+    builder.Configuration.GetConnectionString("TenantErp")));
+
+builder.Services.AddScoped<ITenantDatabaseResolver, TenantDatabaseResolver>();
+builder.Services.AddScoped<ITenantDbContextFactory, TenantDbContextFactory>();
+
+// Register Repositories
+builder.Services.AddScoped<IMemberRepository, MemberRepository>();
+builder.Services.AddScoped<ISubscriptionRepository, SubscriptionRepository>();
+builder.Services.AddScoped<ISaleRepository, SaleRepository>();
+builder.Services.AddScoped<IProductRepository, ProductRepository>();
+builder.Services.AddScoped<IInventoryRepository, InventoryRepository>();
+builder.Services.AddScoped<IPaymentRepository, PaymentRepository>();
+builder.Services.AddScoped(typeof(IGenericRepository<>), typeof(GenericRepository<>));
+
+// Register Application Services
+builder.Services.AddScoped<IMemberService, MemberService>();
+builder.Services.AddScoped<IMembershipPlanService, MembershipPlanService>();
+builder.Services.AddScoped<ISubscriptionService, SubscriptionService>();
+builder.Services.AddScoped<IPaymentService, PaymentService>();
+builder.Services.AddScoped<ISaleService, SaleService>();
+builder.Services.AddScoped<IProductService, ProductService>();
+builder.Services.AddScoped<IInventoryService, InventoryService>();
+builder.Services.AddScoped<IDashboardService, DashboardService>();
+
+builder.Services.AddControllers();
+// Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
+builder.Services.AddOpenApi();
+
+// Add CORS
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("AllowAll", policy =>
+        policy.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader());
+});
+
+var app = builder.Build();
+
+// Configure the HTTP request pipeline.
+if (app.Environment.IsDevelopment())
+{
+    app.MapOpenApi();
+}
+
+app.UseHttpsRedirection();
+app.UseCors("AllowAll");
+
+app.UseAuthorization();
+
+app.MapControllers();
+app.MapPost("/companies", async (
+
+  Company company,
+
+  MasterErpDbContext db) =>
+{
+    db.Companies.Add(company);
+    await db.SaveChangesAsync();
+    return Results.Created($"/companies/{company.CompanyId}", company);
+});
+app.MapPost("/devices", async (
+  Device device,
+  MasterErpDbContext db) =>
+{
+    db.Devices.Add(device);
+    await db.SaveChangesAsync();
+    return Results.Created($"/devices/{device.DeviceId}", device);
+});
+
+app.MapPost("/company-databases", async (
+  CompanyDatabase companyDatabase,
+  MasterErpDbContext db) =>
+{
+    db.CompanyDatabases.Add(companyDatabase);
+    await db.SaveChangesAsync();
+    return Results.Created(
+      $"/company-databases/{companyDatabase.CompanyDatabaseId}",
+      companyDatabase);
+});
+
+app.MapGet("/test-tenant/{companyId:int}", async (
+  int companyId,
+  ITenantDbContextFactory tenantFactory) =>
+{
+    await using var tenantDb = await tenantFactory.CreateAsync(companyId);
+    var productCount = await tenantDb.Products.CountAsync();
+    return Results.Ok(new
+    {
+        companyId,
+        productCount
+    });
+});
+
+app.MapGet("/tenant/{companyId:int}/products", async (
+  int companyId,
+  ITenantDbContextFactory tenantFactory) =>
+{
+    await using var tenantDb = await tenantFactory.CreateAsync(companyId);
+    var products = await tenantDb.Products
+      .AsNoTracking()
+      .OrderBy(x => x.ProductId)
+      .ToListAsync();
+    return Results.Ok(products);
+});
+// Tenant customers endpoints
+app.MapPost("/tenant/{companyId:int}/customers", async (
+  int companyId,
+  Customer customer,
+  ITenantDbContextFactory tenantFactory) =>
+{
+  await using var tenantDb = await tenantFactory.CreateAsync(companyId);
+  tenantDb.Customers.Add(customer);
+  await tenantDb.SaveChangesAsync();
+  return Results.Created($"/tenant/{companyId}/customers/{customer.CustomerId}", customer);
+});
+app.MapGet("/tenant/{companyId:int}/customers", async (
+  int companyId,
+  ITenantDbContextFactory tenantFactory) =>
+{
+  await using var tenantDb = await tenantFactory.CreateAsync(companyId);
+  var customers = await tenantDb.Customers
+    .AsNoTracking()
+    .OrderBy(x => x.CustomerId)
+    .ToListAsync();
+  return Results.Ok(customers);
+});
+
+// Tenant suppliers endpoints
+app.MapPost("/tenant/{companyId:int}/suppliers", async (
+  int companyId,
+  Supplier supplier,
+  ITenantDbContextFactory tenantFactory) =>
+{
+  await using var tenantDb = await tenantFactory.CreateAsync(companyId);
+  tenantDb.Suppliers.Add(supplier);
+  await tenantDb.SaveChangesAsync();
+  return Results.Created($"/tenant/{companyId}/suppliers/{supplier.SupplierId}", supplier);
+});
+app.MapGet("/tenant/{companyId:int}/suppliers", async (
+  int companyId,
+  ITenantDbContextFactory tenantFactory) =>
+{
+  await using var tenantDb = await tenantFactory.CreateAsync(companyId);
+  var suppliers = await tenantDb.Suppliers
+    .AsNoTracking()
+    .OrderBy(x => x.SupplierId)
+    .ToListAsync();
+  return Results.Ok(suppliers);
+
+});
+
+// FITCORE Gym - Member Endpoints
+app.MapGet("/fitcore/3/members", async (IMemberService service) =>
+{
+    var members = await service.GetAllMembersAsync();
+    return Results.Ok(members.Select(m => m.ToDto()));
+})
+.WithName("GetAll Members")
+.WithOpenApi();
+
+app.MapGet("/fitcore/3/members/{id}", async (int id, IMemberService service) =>
+{
+    var member = await service.GetMemberByIdAsync(id);
+    if (member == null) return Results.NotFound();
+    return Results.Ok(member.ToDto());
+})
+.WithName("GetMember")
+.WithOpenApi();
+
+app.MapPost("/fitcore/3/members", async (ERP_api.DTOs.CreateMemberDto dto, IMemberService service) =>
+{
+    var member = await service.CreateMemberAsync(dto.FirstName, dto.LastName, dto.Phone, dto.Email);
+    return Results.Created($"/fitcore/3/members/{member.MemberId}", member.ToDto());
+})
+.WithName("CreateMember")
+.WithOpenApi();
+
+app.MapPut("/fitcore/3/members/{id}", async (int id, ERP_api.DTOs.UpdateMemberDto dto, IMemberService service) =>
+{
+    var member = await service.UpdateMemberAsync(id, dto.FirstName, dto.LastName, dto.Phone, dto.Email, dto.Status);
+    if (member == null) return Results.NotFound();
+    return Results.Ok(member.ToDto());
+})
+.WithName("UpdateMember")
+.WithOpenApi();
+
+app.MapDelete("/fitcore/3/members/{id}", async (int id, IMemberService service) =>
+{
+    var result = await service.DeleteMemberAsync(id);
+
+    return result switch
+    {
+        MemberDeleteResult.Deleted => Results.NoContent(),
+        MemberDeleteResult.HasHistory => Results.Conflict(
+            new { message = "This member has subscriptions, payments or sales on record. Set their status to Inactive instead of deleting them." }),
+        _ => Results.NotFound()
+    };
+})
+.WithName("DeleteMember")
+.WithOpenApi();
+
+// FITCORE Gym - Membership Plan Endpoints
+app.MapGet("/fitcore/3/membership-plans", async (IMembershipPlanService service) =>
+{
+    var plans = await service.GetAllPlansAsync();
+    return Results.Ok(plans);
+})
+.WithName("GetAllPlans")
+.WithOpenApi();
+
+app.MapGet("/fitcore/3/membership-plans/active", async (IMembershipPlanService service) =>
+{
+    var plans = await service.GetActivePlansAsync();
+    return Results.Ok(plans);
+})
+.WithName("GetActivePlans")
+.WithOpenApi();
+
+app.MapGet("/fitcore/3/membership-plans/{id}", async (int id, IMembershipPlanService service) =>
+{
+    var plan = await service.GetPlanByIdAsync(id);
+    if (plan == null) return Results.NotFound();
+    return Results.Ok(plan);
+})
+.WithName("GetPlanById")
+.WithOpenApi();
+
+app.MapPost("/fitcore/3/membership-plans", async (ERP_api.DTOs.CreateMembershipPlanDto dto, IMembershipPlanService service) =>
+{
+    var plan = await service.CreatePlanAsync(dto.PlanName, dto.DurationMonths, dto.Price, dto.Description);
+    return Results.Created($"/fitcore/3/membership-plans/{plan.PlanId}", plan);
+})
+.WithName("CreatePlan")
+.WithOpenApi();
+
+app.MapPut("/fitcore/3/membership-plans/{id}", async (int id, ERP_api.DTOs.UpdateMembershipPlanDto dto, IMembershipPlanService service) =>
+{
+    var plan = await service.UpdatePlanAsync(id, dto.PlanName, dto.DurationMonths, dto.Price, dto.Description, dto.IsActive);
+    if (plan == null) return Results.NotFound();
+    return Results.Ok(plan);
+})
+.WithName("UpdatePlan")
+.WithOpenApi();
+
+app.MapDelete("/fitcore/3/membership-plans/{id}", async (int id, IMembershipPlanService service) =>
+{
+    var result = await service.DeletePlanAsync(id);
+
+    return result switch
+    {
+        PlanDeleteResult.Deleted => Results.NoContent(),
+        PlanDeleteResult.InUse => Results.Conflict(
+            new { message = "This plan is used by existing subscriptions. Deactivate it instead of deleting it." }),
+        _ => Results.NotFound()
+    };
+})
+.WithName("DeletePlan")
+.WithOpenApi();
+
+// FITCORE Gym - Subscription Endpoints
+app.MapGet("/fitcore/3/subscriptions/{id}", async (int id, ISubscriptionService service) =>
+{
+    var subscription = await service.GetSubscriptionByIdAsync(id);
+    if (subscription == null) return Results.NotFound();
+    return Results.Ok(subscription.ToDto());
+})
+.WithName("GetSubscriptionById")
+.WithOpenApi();
+
+app.MapGet("/fitcore/3/members/{memberId}/subscriptions", async (int memberId, ISubscriptionService service) =>
+{
+    var subscriptions = await service.GetMemberSubscriptionsAsync(memberId);
+    return Results.Ok(subscriptions.Select(s => s.ToDto()));
+})
+.WithName("GetMemberSubscriptions")
+.WithOpenApi();
+
+app.MapGet("/fitcore/3/subscriptions/active", async (ISubscriptionService service) =>
+{
+    var subscriptions = await service.GetActiveSubscriptionsAsync();
+    return Results.Ok(subscriptions.Select(s => s.ToDto()));
+})
+.WithName("GetActiveSubscriptions")
+.WithOpenApi();
+
+app.MapPost("/fitcore/3/subscriptions", async (ERP_api.DTOs.CreateSubscriptionDto dto, ISubscriptionService service) =>
+{
+    var subscription = await service.CreateSubscriptionAsync(
+        dto.MemberId, dto.PlanId, dto.StartDate ?? DateTime.UtcNow);
+    return Results.Created($"/fitcore/3/subscriptions/{subscription.SubscriptionId}", subscription.ToDto());
+})
+.WithName("CreateSubscription")
+.WithOpenApi();
+
+app.MapPost("/fitcore/3/subscriptions/{id}/renew", async (int id, ISubscriptionService service) =>
+{
+    var subscription = await service.RenewSubscriptionAsync(id);
+    if (subscription == null) return Results.NotFound();
+    return Results.Ok(subscription.ToDto());
+})
+.WithName("RenewSubscription")
+.WithOpenApi();
+
+app.MapPost("/fitcore/3/subscriptions/{id}/cancel", async (int id, ISubscriptionService service) =>
+{
+    var subscription = await service.CancelSubscriptionAsync(id);
+    if (subscription == null) return Results.NotFound();
+    return Results.Ok(subscription.ToDto());
+})
+.WithName("CancelSubscription")
+.WithOpenApi();
+
+app.MapDelete("/fitcore/3/subscriptions/{id}", async (int id, ISubscriptionService service) =>
+{
+    var success = await service.DeleteSubscriptionAsync(id);
+    if (!success) return Results.NotFound();
+    return Results.NoContent();
+})
+.WithName("DeleteSubscription")
+.WithOpenApi();
+
+
+app.MapPost("/fitcore/3/subscriptions/expire-overdue", async (ISubscriptionService service) =>
+{
+    var count = await service.ExpireOverdueSubscriptionsAsync();
+    return Results.Ok(new { expired = count });
+})
+.WithName("ExpireOverdueSubscriptions")
+.WithOpenApi();
+
+app.MapGet("/fitcore/3/subscriptions", async (ISubscriptionService service) =>
+{
+    var subscriptions = await service.GetAllSubscriptionsAsync();
+    return Results.Ok(subscriptions.Select(s => s.ToDto()));
+})
+.WithName("GetAllSubscriptions")
+.WithOpenApi();
+
+// FITCORE Gym - Payment Endpoints
+app.MapGet("/fitcore/3/payments", async (IPaymentService service) =>
+{
+    var payments = await service.GetAllPaymentsAsync();
+    return Results.Ok(payments);
+})
+.WithName("GetAllPayments")
+.WithOpenApi();
+
+app.MapGet("/fitcore/3/payments/{id}", async (int id, IPaymentService service) =>
+{
+    var payment = await service.GetPaymentByIdAsync(id);
+    if (payment == null) return Results.NotFound();
+    return Results.Ok(payment.ToDto());
+})
+.WithName("GetPaymentById")
+.WithOpenApi();
+
+app.MapGet("/fitcore/3/members/{memberId}/payments", async (int memberId, IPaymentService service) =>
+{
+    var payments = await service.GetMemberPaymentsAsync(memberId);
+    return Results.Ok(payments);
+})
+.WithName("GetMemberPayments")
+.WithOpenApi();
+
+app.MapGet("/fitcore/3/subscriptions/{subscriptionId}/payments", async (int subscriptionId, IPaymentService service) =>
+{
+    var payments = await service.GetSubscriptionPaymentsAsync(subscriptionId);
+    return Results.Ok(payments);
+})
+.WithName("GetSubscriptionPayments")
+.WithOpenApi();
+
+app.MapPost("/fitcore/3/payments", async (ERP_api.DTOs.RecordPaymentDto dto, IPaymentService service) =>
+{
+    try
+    {
+        var payment = await service.RecordPaymentAsync(
+            dto.MemberId,
+            dto.SubscriptionId,
+            dto.Amount,
+            dto.PaymentDate ?? DateTime.UtcNow,
+            dto.Method,
+            dto.ReferenceNo,
+            dto.Status,
+            dto.Notes);
+
+        return Results.Created($"/fitcore/3/payments/{payment.PaymentId}", payment.ToDto());
+    }
+    catch (InvalidOperationException ex)
+    {
+        return Results.BadRequest(new { error = ex.Message });
+    }
+})
+.WithName("RecordPayment")
+.WithOpenApi();
+
+app.MapPut("/fitcore/3/payments/{id}", async (int id, ERP_api.DTOs.UpdatePaymentDto dto, IPaymentService service) =>
+{
+    try
+    {
+        var payment = await service.UpdatePaymentAsync(
+            id, dto.Amount, dto.PaymentDate ?? default, dto.Method, dto.ReferenceNo, dto.Status, dto.Notes);
+
+        if (payment == null) return Results.NotFound();
+        return Results.Ok(payment.ToDto());
+    }
+    catch (InvalidOperationException ex)
+    {
+        return Results.BadRequest(new { error = ex.Message });
+    }
+})
+.WithName("UpdatePayment")
+.WithOpenApi();
+
+app.MapPatch("/fitcore/3/payments/{id}/status", async (int id, ERP_api.DTOs.UpdatePaymentStatusDto dto, IPaymentService service) =>
+{
+    try
+    {
+        var payment = await service.UpdatePaymentStatusAsync(id, dto.Status);
+        if (payment == null) return Results.NotFound();
+        return Results.Ok(payment.ToDto());
+    }
+    catch (InvalidOperationException ex)
+    {
+        return Results.BadRequest(new { error = ex.Message });
+    }
+})
+.WithName("UpdatePaymentStatus")
+.WithOpenApi();
+
+app.MapDelete("/fitcore/3/payments/{id}", async (int id, IPaymentService service) =>
+{
+    var success = await service.DeletePaymentAsync(id);
+    if (!success) return Results.NotFound();
+    return Results.NoContent();
+})
+.WithName("DeletePayment")
+.WithOpenApi();
+
+// FITCORE Gym - Sale Endpoints
+app.MapGet("/fitcore/3/sales", async (ISaleService service) =>
+{
+    var sales = await service.GetAllSalesAsync();
+    return Results.Ok(sales);
+})
+.WithName("GetAllSales")
+.WithOpenApi();
+
+app.MapGet("/fitcore/3/sales/{id}", async (int id, ISaleService service) =>
+{
+    var sale = await service.GetSaleByIdAsync(id);
+    if (sale == null) return Results.NotFound();
+    return Results.Ok(sale.ToDto());
+})
+.WithName("GetSaleById")
+.WithOpenApi();
+
+app.MapGet("/fitcore/3/sales/{id}/items", async (int id, ISaleService service) =>
+{
+    var lines = await service.GetSaleLinesAsync(id);
+    return Results.Ok(lines);
+})
+.WithName("GetSaleLines")
+.WithOpenApi();
+
+app.MapGet("/fitcore/3/members/{memberId}/sales", async (int memberId, ISaleService service) =>
+{
+    var sales = await service.GetMemberSalesAsync(memberId);
+    return Results.Ok(sales.Select(s => s.ToDto()));
+})
+.WithName("GetMemberSales")
+.WithOpenApi();
+
+app.MapPost("/fitcore/3/sales", async (ERP_api.DTOs.CreateSaleDto dto, ISaleService service) =>
+{
+    try
+    {
+        var items = dto.Items.Select(i => (i.ProductId, i.Quantity, i.UnitPrice)).ToList();
+        var sale = await service.CreateSaleAsync(dto.MemberId, items);
+        return Results.Created($"/fitcore/3/sales/{sale.SaleId}", sale.ToDto());
+    }
+    catch (InvalidOperationException ex)
+    {
+        return Results.BadRequest(new { error = ex.Message });
+    }
+})
+.WithName("CreateSale")
+.WithOpenApi();
+
+app.MapDelete("/fitcore/3/sales/{id}", async (int id, ISaleService service) =>
+{
+    var success = await service.DeleteSaleAsync(id);
+    if (!success) return Results.NotFound();
+    return Results.NoContent();
+})
+.WithName("DeleteSale")
+.WithOpenApi();
+
+// FITCORE Gym - Membership overview
+app.MapGet("/fitcore/3/membership-overview", async (IMemberService service) =>
+{
+    var overview = await service.GetMembershipOverviewAsync();
+    return Results.Ok(overview);
+})
+.WithName("GetMembershipOverview")
+.WithOpenApi();
+
+app.MapGet("/fitcore/3/members/search", async (string? term, IMemberService service) =>
+{
+    var members = await service.SearchMembersAsync(term ?? string.Empty);
+    return Results.Ok(members.Select(m => m.ToDto()));
+})
+.WithName("SearchMembers")
+.WithOpenApi();
+
+// FITCORE Gym - Dashboard
+app.MapGet("/fitcore/3/dashboard", async (IDashboardService service) =>
+{
+    var summary = await service.GetSummaryAsync();
+    return Results.Ok(summary);
+})
+.WithName("GetDashboardSummary")
+.WithOpenApi();
+
+// FITCORE Gym - Product Endpoints
+app.MapGet("/fitcore/3/products", async (IProductService service) =>
+{
+    var products = await service.GetAllProductsAsync();
+    return Results.Ok(products);
+})
+.WithName("GetAllProducts")
+.WithOpenApi();
+
+app.MapGet("/fitcore/3/products/active", async (IProductService service) =>
+{
+    var products = await service.GetActiveProductsAsync();
+    return Results.Ok(products);
+})
+.WithName("GetActiveProducts")
+.WithOpenApi();
+
+app.MapGet("/fitcore/3/products/{id}", async (int id, IProductService service) =>
+{
+    var product = await service.GetProductByIdAsync(id);
+    if (product == null) return Results.NotFound();
+    return Results.Ok(product);
+})
+.WithName("GetProductById")
+.WithOpenApi();
+
+app.MapPost("/fitcore/3/products", async (ERP_api.DTOs.CreateProductDto dto, IProductService service) =>
+{
+    try
+    {
+        var product = await service.CreateProductAsync(
+            dto.ProductCode, dto.ProductName, dto.UnitPrice, dto.OpeningStock, dto.ReorderLevel);
+        return Results.Created($"/fitcore/3/products/{product.ProductId}", product);
+    }
+    catch (InvalidOperationException ex)
+    {
+        return Results.BadRequest(new { error = ex.Message });
+    }
+})
+.WithName("CreateProduct")
+.WithOpenApi();
+
+app.MapPut("/fitcore/3/products/{id}", async (int id, ERP_api.DTOs.UpdateProductDto dto, IProductService service) =>
+{
+    try
+    {
+        var product = await service.UpdateProductAsync(
+            id, dto.ProductCode, dto.ProductName, dto.UnitPrice, dto.IsActive);
+        if (product == null) return Results.NotFound();
+        return Results.Ok(product);
+    }
+    catch (InvalidOperationException ex)
+    {
+        return Results.BadRequest(new { error = ex.Message });
+    }
+})
+.WithName("UpdateProduct")
+.WithOpenApi();
+
+app.MapDelete("/fitcore/3/products/{id}", async (int id, IProductService service) =>
+{
+    try
+    {
+        var success = await service.DeleteProductAsync(id);
+        if (!success) return Results.NotFound();
+        return Results.NoContent();
+    }
+    catch (InvalidOperationException ex)
+    {
+        return Results.BadRequest(new { error = ex.Message });
+    }
+})
+.WithName("DeleteProduct")
+.WithOpenApi();
+
+// FITCORE Gym - Inventory Endpoints
+app.MapGet("/fitcore/3/inventory", async (IInventoryService service) =>
+{
+    var inventory = await service.GetInventoryAsync();
+    return Results.Ok(inventory);
+})
+.WithName("GetInventory")
+.WithOpenApi();
+
+app.MapGet("/fitcore/3/inventory/{productId}", async (int productId, IInventoryService service) =>
+{
+    var row = await service.GetByProductIdAsync(productId);
+    if (row == null) return Results.NotFound();
+    return Results.Ok(row);
+})
+.WithName("GetInventoryForProduct")
+.WithOpenApi();
+
+app.MapGet("/fitcore/3/inventory/movements", async (int? productId, int? take, IInventoryService service) =>
+{
+    var movements = await service.GetMovementsAsync(productId, take ?? 200);
+    return Results.Ok(movements);
+})
+.WithName("GetStockMovements")
+.WithOpenApi();
+
+app.MapPost("/fitcore/3/inventory/{productId}/stock-in", async (
+    int productId, ERP_api.DTOs.StockMovementRequestDto dto, IInventoryService service) =>
+{
+    try
+    {
+        var row = await service.StockInAsync(productId, dto.Quantity, dto.Reference, dto.Notes);
+        return Results.Ok(row);
+    }
+    catch (InvalidOperationException ex)
+    {
+        return Results.BadRequest(new { error = ex.Message });
+    }
+})
+.WithName("StockIn")
+.WithOpenApi();
+
+app.MapPost("/fitcore/3/inventory/{productId}/stock-out", async (
+    int productId, ERP_api.DTOs.StockMovementRequestDto dto, IInventoryService service) =>
+{
+    try
+    {
+        var row = await service.StockOutAsync(productId, dto.Quantity, dto.Reference, dto.Notes);
+        return Results.Ok(row);
+    }
+    catch (InvalidOperationException ex)
+    {
+        return Results.BadRequest(new { error = ex.Message });
+    }
+})
+.WithName("StockOut")
+.WithOpenApi();
+
+app.MapPost("/fitcore/3/inventory/{productId}/adjust", async (
+    int productId, ERP_api.DTOs.StockAdjustmentDto dto, IInventoryService service) =>
+{
+    try
+    {
+        var row = await service.AdjustAsync(productId, dto.NewQuantity, dto.Notes);
+        return Results.Ok(row);
+    }
+    catch (InvalidOperationException ex)
+    {
+        return Results.BadRequest(new { error = ex.Message });
+    }
+})
+.WithName("AdjustStock")
+.WithOpenApi();
+
+app.MapPut("/fitcore/3/inventory/{productId}/reorder-level", async (
+    int productId, ERP_api.DTOs.ReorderLevelDto dto, IInventoryService service) =>
+{
+    try
+    {
+        var row = await service.SetReorderLevelAsync(productId, dto.ReorderLevel);
+        return Results.Ok(row);
+    }
+    catch (InvalidOperationException ex)
+    {
+        return Results.BadRequest(new { error = ex.Message });
+    }
+})
+.WithName("SetReorderLevel")
+.WithOpenApi();
+
+app.Run();

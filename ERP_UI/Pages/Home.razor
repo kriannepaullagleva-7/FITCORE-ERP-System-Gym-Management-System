@@ -1,0 +1,19 @@
+@page "/"
+@inject NavigationManager Nav
+
+@*
+    The root path is not a landing page in its own right: the dashboard is the home screen of
+    the ERP, so anyone arriving at "/" is sent straight there.
+*@
+
+<PageTitle>FitCore ERP</PageTitle>
+
+<div class="fc-loading">
+    <span class="fc-spinner"></span>
+    <span>Opening the dashboard…</span>
+</div>
+
+@code {
+    protected override void OnInitialized() =>
+        Nav.NavigateTo("fitcore/dashboard", replace: true);
+}

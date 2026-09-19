@@ -1,0 +1,52 @@
+@*
+    A table header cell that sorts the table when clicked. Renders as a plain header when the
+    column has no sort selector registered, so an actions column does not look clickable.
+*@
+
+<th class="@CssClass">
+    @if (Sortable)
+    {
+        <button type="button" class="fc-sort @(IsActive ? "is-active" : "")" @onclick="Toggle"
+                aria-label="@($"Sort by {Label}")">
+            <span>@Label</span>
+            @if (IsActive)
+            {
+                <Icon Name="@(State.Descending ? "arrow-down" : "arrow-up")" Size="12" />
+            }
+            else
+            {
+                <span class="fc-sort-idle"><Icon Name="arrow-down" Size="12" /></span>
+            }
+        </button>
+    }
+    else
+    {
+        @Label
+    }
+</th>
+
+@code {
+    [Parameter, EditorRequired] public ITableState State { get; set; } = default!;
+
+    /// <summary>The key registered on the TableState. Empty means the column is not sortable.</summary>
+    [Parameter] public string Column { get; set; } = "";
+
+    [Parameter, EditorRequired] public string Label { get; set; } = "";
+
+    /// <summary>Extra classes for the th, typically "fc-right".</summary>
+    [Parameter] public string CssClass { get; set; } = "";
+
+    /// <summary>Raised after the sort changes so the page can re-render.</summary>
+    [Parameter] public EventCallback OnSorted { get; set; }
+
+    private bool Sortable => !string.IsNullOrWhiteSpace(Column);
+
+    private bool IsActive =>
+        Sortable && string.Equals(State.SortColumn, Column, StringComparison.OrdinalIgnoreCase);
+
+    private async Task Toggle()
+    {
+        State.ToggleSort(Column);
+        await OnSorted.InvokeAsync();
+    }
+}

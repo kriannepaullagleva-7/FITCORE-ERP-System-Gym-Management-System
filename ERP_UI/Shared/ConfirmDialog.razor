@@ -1,0 +1,45 @@
+@*
+    Confirmation for a destructive or irreversible action. The confirm button is styled to
+    match the severity of what is about to happen, and it says what it does rather than "OK".
+*@
+
+<Modal IsOpen="IsOpen" Title="@Title" Size="narrow" OnClose="OnCancel">
+    <ChildContent>
+        <p>@Message</p>
+        @if (!string.IsNullOrWhiteSpace(Warning))
+        {
+            <Alert Kind="warning" Message="@Warning" />
+        }
+        @Extra
+    </ChildContent>
+
+    <Footer>
+        <button type="button" class="fc-btn fc-btn-secondary" @onclick="OnCancel" disabled="@IsBusy">
+            Cancel
+        </button>
+        <button type="button" class="fc-btn @(IsDestructive ? "fc-btn-danger" : "fc-btn-primary")"
+                @onclick="OnConfirm" disabled="@IsBusy">
+            @if (IsBusy)
+            {
+                <span class="fc-spinner is-sm"></span>
+            }
+            @ConfirmText
+        </button>
+    </Footer>
+</Modal>
+
+@code {
+    [Parameter] public bool IsOpen { get; set; }
+    [Parameter] public string Title { get; set; } = "Are you sure?";
+    [Parameter] public string Message { get; set; } = "";
+    [Parameter] public string? Warning { get; set; }
+    [Parameter] public string ConfirmText { get; set; } = "Confirm";
+    [Parameter] public bool IsDestructive { get; set; } = true;
+    [Parameter] public bool IsBusy { get; set; }
+
+    /// <summary>Extra content rendered under the message, such as a reason box.</summary>
+    [Parameter] public RenderFragment? Extra { get; set; }
+
+    [Parameter] public EventCallback OnConfirm { get; set; }
+    [Parameter] public EventCallback OnCancel { get; set; }
+}

@@ -1,0 +1,25 @@
+@*
+    Shown when a query succeeded but returned nothing. This is deliberately different from
+    the error state: "there is nothing here yet" is not a failure, and the user is offered
+    the action that would create the first record.
+*@
+
+<div class="fc-empty">
+    <div class="fc-empty-icon"><Icon Name="@Icon" Size="24" /></div>
+    <div class="fc-empty-title">@Title</div>
+    @if (!string.IsNullOrWhiteSpace(Message))
+    {
+        <p class="fc-empty-text">@Message</p>
+    }
+    @if (Action is not null)
+    {
+        <div>@Action</div>
+    }
+</div>
+
+@code {
+    [Parameter] public string Title { get; set; } = "Nothing to show yet";
+    [Parameter] public string? Message { get; set; }
+    [Parameter] public string Icon { get; set; } = "inbox";
+    [Parameter] public RenderFragment? Action { get; set; }
+}

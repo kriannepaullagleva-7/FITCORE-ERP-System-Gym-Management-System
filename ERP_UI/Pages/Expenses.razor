@@ -1,0 +1,484 @@
+@page "/fitcore/expenses"
+@inject ExpenseApiService ExpenseApi
+@inject EmployeeApiService EmployeeApi
+@inject ToastService Toasts
+
+@*
+    Expenses: money going out that is not payroll. Date and category filtering are done by
+    the server, so the request narrows what comes back rather than the browser doing it after
+    the fact.
+*@
+
+<PageTitle>Expenses - FitCore ERP</PageTitle>
+
+<PageHeader Title="Expenses"
+            Description="Rent, utilities, supplies and everything else the gym pays out."
+            Crumbs="crumbs">
+    <Actions>
+        <button class="fc-btn fc-btn-secondary" @onclick="ReloadAsync" disabled="@isLoading">
+            <Icon Name="refresh" Size="15" /> Refresh
+        </button>
+        <button class="fc-btn fc-btn-primary" @onclick="OpenCreate">
+            <Icon Name="plus" Size="15" /> Add expense
+        </button>
+    </Actions>
+</PageHeader>
+
+<Alert Message="@pageError" Kind="error" OnDismiss="() => pageError = null" />
+
+@if (summary is not null)
+{
+    <div class="fc-kpi-grid">
+        <StatCard Label="Recorded" Value="@summary.Count.ToString("N0")" Icon="expense" Tone="blue" />
+        <StatCard Label="Total" Value="@summary.Total.ToString("N2")" Icon="money" Tone="slate" />
+        <StatCard Label="This month" Value="@summary.ThisMonth.ToString("N2")" Icon="calendar" Tone="amber" />
+    </div>
+
+    <div class="fc-card fc-mb">
+        <div class="fc-card-head">
+            <h3 class="fc-card-title">By category</h3>
+        </div>
+        <div class="fc-card-body">
+            <DonutChart Slices="CategorySlices" CentreLabel="spent" Title="Expenses by category"
+                        EmptyMessage="No expenses have been recorded yet." />
+        </div>
+    </div>
+}
+
+<div class="fc-filters">
+    <div class="fc-filter fc-filter-grow">
+        <label class="fc-label" for="exp-search">Search</label>
+        <div class="fc-search">
+            <Icon Name="search" Size="15" />
+            <input id="exp-search" class="fc-input" placeholder="Description or reference"
+                   value="@searchTerm" @oninput="OnSearchInput" />
+        </div>
+    </div>
+
+    <div class="fc-filter">
+        <label class="fc-label" for="exp-from">From</label>
+        <input id="exp-from" type="date" class="fc-input" @bind="filterFrom" />
+    </div>
+
+    <div class="fc-filter">
+        <label class="fc-label" for="exp-to">To</label>
+        <input id="exp-to" type="date" class="fc-input" @bind="filterTo" />
+    </div>
+
+    <div class="fc-filter">
+        <label class="fc-label" for="exp-category">Category</label>
+        <select id="exp-category" class="fc-select" @bind="filterCategory">
+            <option value="">All categories</option>
+            @foreach (var category in categories)
+            {
+                <option value="@category">@category</option>
+            }
+        </select>
+    </div>
+
+    <button class="fc-btn fc-btn-secondary" @onclick="ReloadAsync">
+        <Icon Name="filter" Size="14" /> Apply
+    </button>
+    <button class="fc-btn fc-btn-secondary" @onclick="ClearFiltersAsync">
+        <Icon Name="x" Size="14" /> Clear
+    </button>
+</div>
+
+<div class="fc-card">
+    <div class="fc-card-head">
+        <div>
+            <h3 class="fc-card-title">Expense ledger</h3>
+            <p class="fc-card-sub">Showing @Filtered.Count of @expenses.Count expense(s)</p>
+        </div>
+    </div>
+
+    <div class="fc-card-body is-flush">
+        @if (isLoading)
+        {
+            <LoadingState AsSkeleton="true" Rows="5" />
+        }
+        else if (expenses.Count == 0)
+        {
+            <EmptyState Title="No expenses recorded"
+                        Message="Add rent, utilities or any other outgoing cost to start tracking it."
+                        Icon="expense">
+                <Action>
+                    <button class="fc-btn fc-btn-primary" @onclick="OpenCreate">
+                        <Icon Name="plus" Size="15" /> Add the first expense
+                    </button>
+                </Action>
+            </EmptyState>
+        }
+        else if (Filtered.Count == 0)
+        {
+            <EmptyState Title="No expenses match those filters" Icon="filter">
+                <Action>
+                    <button class="fc-btn fc-btn-secondary" @onclick="ClearFiltersAsync">Clear filters</button>
+                </Action>
+            </EmptyState>
+        }
+        else
+        {
+            <div class="fc-table-wrap">
+                <table class="fc-table">
+                    <thead>
+                        <tr>
+                            <SortableHeader State="table" Column="Date" Label="Date" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Column="Category" Label="Category" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Column="Description" Label="Description" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Column="Amount" Label="Amount" CssClass="fc-right" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Column="Method" Label="Method" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Column="Reference" Label="Reference" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Column="Staff" Label="Recorded by" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Label="Actions" CssClass="fc-right" />
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var expense in PageRows)
+                        {
+                            <tr>
+                                <td class="fc-nowrap fc-small">@expense.ExpenseDate.ToLocalTime().ToString("d MMM yyyy")</td>
+                                <td><span class="fc-chip">@expense.Category</span></td>
+                                <td>@expense.Description</td>
+                                <td class="fc-right fc-num fc-strong">@expense.Amount.ToString("N2")</td>
+                                <td>@expense.PaymentMethod</td>
+                                <td class="fc-id">@(string.IsNullOrWhiteSpace(expense.ReferenceNo) ? "-" : expense.ReferenceNo)</td>
+                                <td class="fc-small">@expense.RecordedByName</td>
+                                <td class="fc-right">
+                                    <span class="fc-actions">
+                                        <button class="fc-act" title="Edit expense" @onclick="() => OpenEdit(expense)">
+                                            <Icon Name="edit" Size="14" />
+                                        </button>
+                                        <button class="fc-act is-danger" title="Delete expense"
+                                                @onclick="() => pendingDelete = expense">
+                                            <Icon Name="trash" Size="14" />
+                                        </button>
+                                    </span>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                    <tfoot>
+                        <tr>
+                            <td colspan="3">Total for the rows shown</td>
+                            <td class="fc-right fc-num">@Filtered.Sum(e => e.Amount).ToString("N2")</td>
+                            <td colspan="4"></td>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+
+            <Pagination State="table" OnChanged="StateHasChanged" />
+        }
+    </div>
+</div>
+
+<Modal IsOpen="showEditor" Title="@(editingId is null ? "Add expense" : $"Edit expense #{editingId}")"
+       OnClose="CloseEditor">
+    <ChildContent>
+        <Alert Message="@formError" Kind="error" />
+
+        <div class="fc-form-grid">
+            <div class="fc-field">
+                <label class="fc-label" for="exp-cat">Category<span class="fc-req">*</span></label>
+                <select id="exp-cat" class="fc-select" @bind="form.Category">
+                    @foreach (var category in categories)
+                    {
+                        <option value="@category">@category</option>
+                    }
+                </select>
+            </div>
+
+            <div class="fc-field">
+                <label class="fc-label" for="exp-amt">Amount<span class="fc-req">*</span></label>
+                <input id="exp-amt" type="number" min="0.01" step="0.01"
+                       class="fc-input @(Invalid(nameof(form.Amount)))" @bind="form.Amount" />
+                @if (fieldErrors.TryGetValue(nameof(form.Amount), out var amountError))
+                {
+                    <span class="fc-error">@amountError</span>
+                }
+            </div>
+
+            <div class="fc-field fc-span-2">
+                <label class="fc-label" for="exp-desc">Description<span class="fc-req">*</span></label>
+                <input id="exp-desc" class="fc-input @(Invalid(nameof(form.Description)))" @bind="form.Description" />
+                @if (fieldErrors.TryGetValue(nameof(form.Description), out var descError))
+                {
+                    <span class="fc-error">@descError</span>
+                }
+            </div>
+
+            <div class="fc-field">
+                <label class="fc-label" for="exp-date">Date</label>
+                <input id="exp-date" type="date" class="fc-input" @bind="form.ExpenseDate" />
+            </div>
+
+            <div class="fc-field">
+                <label class="fc-label" for="exp-method">Payment method</label>
+                <select id="exp-method" class="fc-select" @bind="form.PaymentMethod">
+                    <option value="Cash">Cash</option>
+                    <option value="Card">Card</option>
+                    <option value="Transfer">Transfer</option>
+                    <option value="Check">Check</option>
+                    <option value="GCash">GCash</option>
+                </select>
+            </div>
+
+            <div class="fc-field">
+                <label class="fc-label" for="exp-ref">Reference number</label>
+                <input id="exp-ref" class="fc-input" @bind="form.ReferenceNo" />
+            </div>
+
+            <div class="fc-field">
+                <label class="fc-label" for="exp-staff">Recorded by</label>
+                <select id="exp-staff" class="fc-select" @bind="recordedBy">
+                    <option value="0">- unassigned -</option>
+                    @foreach (var employee in employees)
+                    {
+                        <option value="@employee.EmployeeId">@employee.FullName</option>
+                    }
+                </select>
+            </div>
+        </div>
+    </ChildContent>
+
+    <Footer>
+        <button class="fc-btn fc-btn-secondary" @onclick="CloseEditor" disabled="@isSaving">Cancel</button>
+        <button class="fc-btn fc-btn-success" @onclick="SaveAsync" disabled="@isSaving">
+            @if (isSaving)
+            {
+                <span class="fc-spinner is-sm"></span>
+            }
+            else
+            {
+                <Icon Name="check" Size="15" />
+            }
+            @(editingId is null ? "Record expense" : "Save changes")
+        </button>
+    </Footer>
+</Modal>
+
+<ConfirmDialog IsOpen="pendingDelete is not null"
+               Title="Delete this expense?"
+               Message="@($"The {pendingDelete?.Category.ToLowerInvariant()} expense of {pendingDelete?.Amount:N2} will be removed.")"
+               ConfirmText="Delete expense"
+               IsBusy="isDeleting"
+               OnConfirm="ConfirmDeleteAsync"
+               OnCancel="() => pendingDelete = null" />
+
+@code {
+    private readonly List<PageHeader.Crumb> crumbs = new() { new("Insight"), new("Expenses") };
+
+    private List<ExpenseDto> expenses = new();
+    private List<EmployeeDto> employees = new();
+    private List<string> categories = new();
+    private ExpenseSummaryDto? summary;
+
+    private bool isLoading = true;
+    private string? pageError;
+
+    private readonly TableState<ExpenseDto> table =
+        new TableState<ExpenseDto>(defaultSort: "Date", descending: true)
+            .Column("Date", x => x.ExpenseDate)
+            .Column("Category", x => x.Category)
+            .Column("Description", x => x.Description)
+            .Column("Amount", x => x.Amount)
+            .Column("Method", x => x.PaymentMethod)
+            .Column("Reference", x => x.ReferenceNo)
+            .Column("Staff", x => x.RecordedByName);
+
+    private string searchTerm = "";
+    private DateTime? filterFrom;
+    private DateTime? filterTo;
+    private string filterCategory = "";
+
+    private bool showEditor;
+    private int? editingId;
+    private UpdateExpenseDto form = new();
+    private int recordedBy;
+    private string? formError;
+    private Dictionary<string, string> fieldErrors = new();
+    private bool isSaving;
+
+    private ExpenseDto? pendingDelete;
+    private bool isDeleting;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var categoryResult = await ExpenseApi.GetCategoriesAsync();
+        if (categoryResult.IsSuccess) categories = categoryResult.Value ?? new();
+
+        var employeeResult = await EmployeeApi.GetActiveAsync();
+        if (employeeResult.IsSuccess) employees = employeeResult.Value ?? new();
+
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        isLoading = true;
+        pageError = null;
+
+        var result = await ExpenseApi.GetAllAsync(
+            filterFrom, filterTo, string.IsNullOrWhiteSpace(filterCategory) ? null : filterCategory);
+
+        if (result.IsSuccess)
+        {
+            expenses = result.Value ?? new();
+        }
+        else
+        {
+            pageError = result.ErrorMessage;
+        }
+
+        var summaryResult = await ExpenseApi.GetSummaryAsync();
+        if (summaryResult.IsSuccess) summary = summaryResult.Value;
+
+        isLoading = false;
+    }
+
+    private List<CategorySliceDto> CategorySlices => summary is null
+        ? new()
+        : summary.ByCategory
+            .Select(c => new CategorySliceDto { Label = c.Category, Value = c.Total, Count = c.Count })
+            .ToList();
+
+    private List<ExpenseDto> Filtered
+    {
+        get
+        {
+            if (string.IsNullOrWhiteSpace(searchTerm)) return expenses;
+
+            var term = searchTerm.Trim();
+            return expenses.Where(e =>
+                e.Description.Contains(term, StringComparison.OrdinalIgnoreCase) ||
+                e.ReferenceNo.Contains(term, StringComparison.OrdinalIgnoreCase)).ToList();
+        }
+    }
+
+    /// <summary>The filtered expenses, sorted and cut down to the page on screen.</summary>
+    private List<ExpenseDto> PageRows => table.Apply(Filtered);
+
+    private void OnSearchInput(ChangeEventArgs args) => searchTerm = args.Value?.ToString() ?? "";
+
+    private Task ClearFiltersAsync()
+    {
+        searchTerm = "";
+        filterFrom = null;
+        filterTo = null;
+        filterCategory = "";
+        return ReloadAsync();
+    }
+
+    private void OpenCreate()
+    {
+        editingId = null;
+        form = new UpdateExpenseDto
+        {
+            Category = categories.FirstOrDefault() ?? "Other",
+            ExpenseDate = DateTime.Today
+        };
+        recordedBy = 0;
+        fieldErrors = new();
+        formError = null;
+        showEditor = true;
+    }
+
+    private void OpenEdit(ExpenseDto expense)
+    {
+        editingId = expense.ExpenseId;
+        form = new UpdateExpenseDto
+        {
+            Category = expense.Category,
+            Description = expense.Description,
+            Amount = expense.Amount,
+            ExpenseDate = expense.ExpenseDate,
+            PaymentMethod = expense.PaymentMethod,
+            ReferenceNo = expense.ReferenceNo
+        };
+        recordedBy = expense.RecordedByEmployeeId ?? 0;
+        fieldErrors = new();
+        formError = null;
+        showEditor = true;
+    }
+
+    private void CloseEditor()
+    {
+        showEditor = false;
+        editingId = null;
+        formError = null;
+    }
+
+    private string Invalid(string field) => fieldErrors.ContainsKey(field) ? "is-invalid" : "";
+
+    private bool Validate()
+    {
+        fieldErrors = new();
+
+        if (string.IsNullOrWhiteSpace(form.Description))
+            fieldErrors[nameof(form.Description)] = "A description is required.";
+
+        if (form.Amount <= 0)
+            fieldErrors[nameof(form.Amount)] = "Amount must be greater than zero.";
+
+        return fieldErrors.Count == 0;
+    }
+
+    private async Task SaveAsync()
+    {
+        formError = null;
+
+        if (!Validate()) return;
+
+        isSaving = true;
+        form.RecordedByEmployeeId = recordedBy == 0 ? null : recordedBy;
+
+        bool succeeded;
+        string? message;
+
+        if (editingId is null)
+        {
+            var result = await ExpenseApi.CreateAsync(form);
+            succeeded = result.IsSuccess;
+            message = result.ErrorMessage;
+        }
+        else
+        {
+            var result = await ExpenseApi.UpdateAsync(editingId.Value, form);
+            succeeded = result.IsSuccess;
+            message = result.ErrorMessage;
+        }
+
+        isSaving = false;
+
+        if (!succeeded)
+        {
+            formError = message;
+            return;
+        }
+
+        Toasts.Success($"Expense was {(editingId is null ? "recorded" : "updated")}.");
+        CloseEditor();
+        await ReloadAsync();
+    }
+
+    private async Task ConfirmDeleteAsync()
+    {
+        if (pendingDelete is null) return;
+
+        isDeleting = true;
+        var result = await ExpenseApi.DeleteAsync(pendingDelete.ExpenseId);
+        isDeleting = false;
+
+        if (!result.IsSuccess)
+        {
+            pageError = result.ErrorMessage;
+            pendingDelete = null;
+            return;
+        }
+
+        Toasts.Success("The expense was deleted.");
+        pendingDelete = null;
+        await ReloadAsync();
+    }
+}

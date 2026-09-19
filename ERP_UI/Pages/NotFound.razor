@@ -1,0 +1,18 @@
+@page "/not-found"
+@layout MainLayout
+
+<PageTitle>Page not found - FitCore ERP</PageTitle>
+
+<div class="fc-card">
+    <div class="fc-card-body">
+        <EmptyState Title="That page does not exist"
+                    Message="The address you followed is not part of FitCore ERP. Use the navigation on the left, or go back to the dashboard."
+                    Icon="alert">
+            <Action>
+                <a class="fc-btn fc-btn-primary" href="fitcore/dashboard">
+                    <Icon Name="dashboard" Size="15" /> Go to the dashboard
+                </a>
+            </Action>
+        </EmptyState>
+    </div>
+</div>

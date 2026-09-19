@@ -1,0 +1,262 @@
+@page "/fitcore/administration"
+@inject AdminApiService AdminApi
+@inject ReportsApiService ReportsApi
+@inject ToastService Toasts
+
+@*
+    System administration.
+
+    These endpoints all carry [CrossTenantAdmin] on the server and answer 403 unless
+    Tenancy:EnableCrossTenantAdminApi is turned on (it is, in Development only). That 403 is
+    surfaced here rather than hidden, because "this feature is disabled by configuration" is a
+    real, useful answer for whoever is looking at this screen.
+*@
+
+<PageTitle>System Administration - FitCore ERP</PageTitle>
+
+<PageHeader Title="System Administration"
+            Description="Tenant companies, their databases, and provisioning status."
+            Crumbs="crumbs">
+    <Actions>
+        <button class="fc-btn fc-btn-secondary" @onclick="ReloadAsync" disabled="@isLoading">
+            <Icon Name="refresh" Size="15" /> Refresh
+        </button>
+    </Actions>
+</PageHeader>
+
+@if (isForbidden)
+{
+    <div class="fc-card">
+        <div class="fc-card-body">
+            <EmptyState Title="Cross-tenant administration is disabled"
+                        Message="Tenancy:EnableCrossTenantAdminApi is off for this environment, so the server refuses these endpoints with 403. It is enabled in Development only. This is expected behaviour outside Development, not a bug."
+                        Icon="ban" />
+        </div>
+    </div>
+}
+else
+{
+    <Alert Message="@pageError" Kind="error" OnDismiss="() => pageError = null" />
+
+    @if (tenant is not null)
+    {
+        <div class="fc-alert fc-alert-info">
+            <Icon Name="building" Size="17" />
+            <div class="fc-alert-body">
+                <div class="fc-strong">This session is served by company @tenant.CompanyId</div>
+                <div>
+                    Resolved by: @tenant.Source
+                    @if (tenant.UsingFallbackConnection)
+                    {
+                        <span class="fc-badge tone-amber no-dot">using fallback connection</span>
+                    }
+                </div>
+            </div>
+        </div>
+    }
+
+    <div class="fc-kpi-grid">
+        <StatCard Label="Companies" Value="@companies.Count.ToString("N0")" Icon="building" Tone="blue" />
+        <StatCard Label="Active companies" Value="@companies.Count(c => c.IsActive).ToString("N0")"
+                  Icon="check" Tone="green" />
+        <StatCard Label="Database records" Value="@databases.Count.ToString("N0")" Icon="database" Tone="slate" />
+    </div>
+
+    <div class="fc-card">
+        <div class="fc-card-head">
+            <div>
+                <h3 class="fc-card-title">Companies</h3>
+                <p class="fc-card-sub">Every tenant registered on this platform</p>
+            </div>
+        </div>
+
+        <div class="fc-card-body is-flush">
+            @if (isLoading)
+            {
+                <LoadingState AsSkeleton="true" Rows="4" />
+            }
+            else if (companies.Count == 0)
+            {
+                <EmptyState Title="No companies registered" Icon="building" />
+            }
+            else
+            {
+                <div class="fc-table-wrap">
+                    <table class="fc-table">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Code</th>
+                                <th>Name</th>
+                                <th>Status</th>
+                                <th>Registered</th>
+                                <th>Database</th>
+                                <th>Provisioning</th>
+                                <th class="fc-right">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var company in companies)
+                            {
+                                var db = databases.FirstOrDefault(d => d.CompanyId == company.CompanyId && d.IsActive);
+                                var status = provisioningStatus.GetValueOrDefault(company.CompanyId);
+
+                                <tr>
+                                    <td class="fc-id">#@company.CompanyId</td>
+                                    <td>@company.CompanyCode</td>
+                                    <td class="fc-cell-strong">@company.CompanyName</td>
+                                    <td><StatusBadge Status="@(company.IsActive ? "Active" : "Inactive")" /></td>
+                                    <td class="fc-nowrap fc-small">@company.CreatedAt.ToLocalTime().ToString("d MMM yyyy")</td>
+                                    <td>
+                                        @if (db is null)
+                                        {
+                                            <span class="fc-badge tone-red">no database</span>
+                                        }
+                                        else
+                                        {
+                                            <span class="fc-chip">@db.DatabaseName</span>
+                                            <span class="fc-cell-sub">@db.ServerName</span>
+                                        }
+                                    </td>
+                                    <td>
+                                        @if (status is null)
+                                        {
+                                            <span class="fc-muted fc-small">not checked</span>
+                                        }
+                                        else if (!status.CanConnect)
+                                        {
+                                            <span class="fc-badge tone-red">cannot connect</span>
+                                        }
+                                        else if (status.IsUpToDate)
+                                        {
+                                            <span class="fc-badge tone-green">up to date</span>
+                                        }
+                                        else
+                                        {
+                                            <span class="fc-badge tone-amber">
+                                                @status.PendingMigrations.Count pending
+                                            </span>
+                                        }
+                                    </td>
+                                    <td class="fc-right">
+                                        <span class="fc-actions">
+                                            <button class="fc-act" title="Check provisioning status"
+                                                    @onclick="() => CheckProvisioningAsync(company.CompanyId)">
+                                                <Icon Name="eye" Size="14" />
+                                            </button>
+                                            <button class="fc-act" title="Apply pending migrations"
+                                                    disabled="@(isProvisioning == company.CompanyId)"
+                                                    @onclick="() => ProvisionAsync(company.CompanyId)">
+                                                @if (isProvisioning == company.CompanyId)
+                                                {
+                                                    <span class="fc-spinner is-sm"></span>
+                                                }
+                                                else
+                                                {
+                                                    <Icon Name="database" Size="14" />
+                                                }
+                                            </button>
+                                        </span>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </div>
+    </div>
+
+    <div class="fc-alert fc-alert-info fc-mt">
+        <Icon Name="info" Size="17" />
+        <div class="fc-alert-body">
+            Onboarding a new tenant is a three-step process: register the company, register its
+            database with a credential key that names an entry under
+            <code>TenantCredentials</code> in server configuration, then provision it to apply
+            the tenant schema. This screen surfaces the existing companies and lets you check or
+            re-run provisioning; creating a brand new tenant is done through the API directly,
+            since it also requires configuring a credential on the server that this browser
+            session cannot see or set.
+        </div>
+    </div>
+}
+
+@code {
+    private readonly List<PageHeader.Crumb> crumbs = new() { new("Insight"), new("System Administration") };
+
+    private List<CompanyDto> companies = new();
+    private List<CompanyDatabaseDto> databases = new();
+    private Dictionary<int, ProvisioningStatusDto> provisioningStatus = new();
+    private TenantInfoDto? tenant;
+
+    private bool isLoading = true;
+    private bool isForbidden;
+    private string? pageError;
+    private int? isProvisioning;
+
+    protected override Task OnInitializedAsync() => ReloadAsync();
+
+    private async Task ReloadAsync()
+    {
+        isLoading = true;
+        isForbidden = false;
+        pageError = null;
+
+        var tenantResult = await ReportsApi.GetCurrentTenantAsync();
+        if (tenantResult.IsSuccess) tenant = tenantResult.Value;
+
+        var companyResult = await AdminApi.GetCompaniesAsync();
+
+        if (companyResult.IsSuccess)
+        {
+            companies = companyResult.Value ?? new();
+        }
+        else if (companyResult.StatusCode == System.Net.HttpStatusCode.Forbidden)
+        {
+            isForbidden = true;
+            isLoading = false;
+            return;
+        }
+        else
+        {
+            pageError = companyResult.ErrorMessage;
+        }
+
+        var databaseResult = await AdminApi.GetDatabasesAsync();
+        if (databaseResult.IsSuccess) databases = databaseResult.Value ?? new();
+
+        isLoading = false;
+    }
+
+    private async Task CheckProvisioningAsync(int companyId)
+    {
+        var result = await AdminApi.GetProvisioningAsync(companyId);
+
+        if (result.IsSuccess && result.Value is not null)
+        {
+            provisioningStatus[companyId] = result.Value;
+        }
+        else
+        {
+            pageError = result.ErrorMessage;
+        }
+    }
+
+    private async Task ProvisionAsync(int companyId)
+    {
+        isProvisioning = companyId;
+
+        var result = await AdminApi.ProvisionAsync(companyId);
+
+        isProvisioning = null;
+
+        if (!result.IsSuccess)
+        {
+            pageError = result.ErrorMessage;
+            return;
+        }
+
+        Toasts.Success($"Company #{companyId} was provisioned.");
+        await CheckProvisioningAsync(companyId);
+    }
+}

@@ -1,0 +1,748 @@
+@page "/fitcore/payments"
+@inject PaymentApiService PaymentApi
+@inject MemberApiService MemberApi
+@inject SaleApiService SaleApi
+@inject SubscriptionApiService SubscriptionApi
+@inject ToastService Toasts
+
+@*
+    Payments.
+
+    A payment settles either a membership or a sale, or neither. Reversing one marks it
+    Refunded rather than deleting it: a settled financial record that disappears leaves a
+    ledger that cannot explain its own totals.
+*@
+
+<PageTitle>Payments - FitCore ERP</PageTitle>
+
+<PageHeader Title="Payments"
+            Description="Money received, what it settled, and what is still outstanding."
+            Crumbs="crumbs">
+    <Actions>
+        <button class="fc-btn fc-btn-secondary" @onclick="ReloadAsync" disabled="@isLoading">
+            <Icon Name="refresh" Size="15" /> Refresh
+        </button>
+        <button class="fc-btn fc-btn-primary" @onclick="OpenCreateAsync">
+            <Icon Name="plus" Size="15" /> Record payment
+        </button>
+    </Actions>
+</PageHeader>
+
+<Alert Message="@pageError" Kind="error" OnDismiss="() => pageError = null" />
+
+@if (summary is not null)
+{
+    <div class="fc-kpi-grid">
+        <StatCard Label="Total collected" Value="@summary.TotalCollected.ToString("N2")"
+                  Hint="@($"{summary.CollectedToday:N2} today")" Icon="money" Tone="green" />
+        <StatCard Label="This month" Value="@summary.CollectedThisMonth.ToString("N2")"
+                  Hint="@($"{summary.Count:N0} payment(s) on file")" Icon="calendar" Tone="blue" />
+        <StatCard Label="Outstanding" Value="@summary.TotalOutstanding.ToString("N2")"
+                  Hint="@($"{summary.OutstandingFromSales:N2} sales, {summary.OutstandingFromMemberships:N2} memberships")"
+                  Icon="alert" Tone="@(summary.TotalOutstanding > 0 ? "amber" : "green")" />
+        <StatCard Label="Partially paid" Value="@summary.PartiallyPaidSales.ToString("N0")"
+                  Hint="@($"{summary.UnpaidSales:N0} sale(s) unpaid")" Icon="card" Tone="amber" />
+        <StatCard Label="Pending" Value="@summary.PendingCount.ToString("N0")"
+                  Hint="@($"{summary.PendingAmount:N2} awaiting clearance")" Icon="info" Tone="slate" />
+        <StatCard Label="Refunded" Value="@summary.RefundedAmount.ToString("N2")"
+                  Hint="Reversed payments" Icon="ban" Tone="red" />
+    </div>
+}
+
+<div class="fc-split fc-mb">
+    <div class="fc-card">
+        <div class="fc-card-head">
+            <h3 class="fc-card-title">Collections by method</h3>
+        </div>
+        <div class="fc-card-body">
+            <DonutChart Slices="MethodSlices" CentreLabel="collected" Title="Payment methods"
+                        EmptyMessage="No settled payments to break down yet." />
+        </div>
+    </div>
+
+    <div class="fc-card">
+        <div class="fc-card-head">
+            <h3 class="fc-card-title">Where the money is owed</h3>
+        </div>
+        <div class="fc-card-body">
+            @if (summary is null || summary.TotalOutstanding <= 0)
+            {
+                <EmptyState Title="Nothing is outstanding"
+                            Message="Every sale and membership on file has been paid in full."
+                            Icon="check" />
+            }
+            else
+            {
+                <dl class="fc-dl">
+                    <dt>From sales</dt>
+                    <dd class="fc-num fc-neg">@summary.OutstandingFromSales.ToString("N2")</dd>
+
+                    <dt>From memberships</dt>
+                    <dd class="fc-num fc-neg">@summary.OutstandingFromMemberships.ToString("N2")</dd>
+
+                    <dt>Total owed</dt>
+                    <dd class="fc-num fc-strong fc-neg">@summary.TotalOutstanding.ToString("N2")</dd>
+
+                    <dt>Sales partly paid</dt>
+                    <dd>@summary.PartiallyPaidSales.ToString("N0")</dd>
+
+                    <dt>Sales not paid</dt>
+                    <dd>@summary.UnpaidSales.ToString("N0")</dd>
+                </dl>
+
+                <a class="fc-btn fc-btn-secondary fc-btn-sm" href="fitcore/reports">
+                    <Icon Name="reports" Size="14" /> Full outstanding report
+                </a>
+            }
+        </div>
+    </div>
+</div>
+
+<div class="fc-filters">
+    <div class="fc-filter fc-filter-grow">
+        <label class="fc-label" for="pay-search">Search</label>
+        <div class="fc-search">
+            <Icon Name="search" Size="15" />
+            <input id="pay-search" class="fc-input" placeholder="Member, reference or payment ID"
+                   value="@searchTerm" @oninput="OnSearchInput" />
+        </div>
+    </div>
+
+    <div class="fc-filter">
+        <label class="fc-label" for="pay-from">From</label>
+        <input id="pay-from" type="date" class="fc-input" @bind="fromDate" />
+    </div>
+
+    <div class="fc-filter">
+        <label class="fc-label" for="pay-to">To</label>
+        <input id="pay-to" type="date" class="fc-input" @bind="toDate" />
+    </div>
+
+    <div class="fc-filter">
+        <label class="fc-label" for="pay-method-filter">Method</label>
+        <select id="pay-method-filter" class="fc-select" @bind="methodFilter">
+            <option value="">All methods</option>
+            <option value="Cash">Cash</option>
+            <option value="Card">Card</option>
+            <option value="Transfer">Transfer</option>
+            <option value="Check">Check</option>
+            <option value="GCash">GCash</option>
+        </select>
+    </div>
+
+    <div class="fc-filter">
+        <label class="fc-label" for="pay-status-filter">Status</label>
+        <select id="pay-status-filter" class="fc-select" @bind="statusFilter">
+            <option value="">All statuses</option>
+            <option value="Completed">Completed</option>
+            <option value="Pending">Pending</option>
+            <option value="Failed">Failed</option>
+            <option value="Refunded">Refunded</option>
+        </select>
+    </div>
+
+    <button class="fc-btn fc-btn-secondary" @onclick="ReloadAsync">
+        <Icon Name="filter" Size="14" /> Apply dates
+    </button>
+    <button class="fc-btn fc-btn-secondary" @onclick="ClearFiltersAsync">
+        <Icon Name="x" Size="14" /> Clear
+    </button>
+</div>
+
+<div class="fc-card">
+    <div class="fc-card-head">
+        <div>
+            <h3 class="fc-card-title">Payment ledger</h3>
+            <p class="fc-card-sub">Showing @Filtered.Count of @payments.Count payment(s)</p>
+        </div>
+    </div>
+
+    <div class="fc-card-body is-flush">
+        @if (isLoading)
+        {
+            <LoadingState AsSkeleton="true" Rows="6" />
+        }
+        else if (payments.Count == 0)
+        {
+            <EmptyState Title="No payments recorded"
+                        Message="Record a payment against a membership or a sale, and it will appear here."
+                        Icon="payment">
+                <Action>
+                    <button class="fc-btn fc-btn-primary" @onclick="OpenCreateAsync">
+                        <Icon Name="plus" Size="15" /> Record the first payment
+                    </button>
+                </Action>
+            </EmptyState>
+        }
+        else if (Filtered.Count == 0)
+        {
+            <EmptyState Title="No payments match those filters" Icon="filter">
+                <Action>
+                    <button class="fc-btn fc-btn-secondary" @onclick="ClearFiltersAsync">Clear filters</button>
+                </Action>
+            </EmptyState>
+        }
+        else
+        {
+            <div class="fc-table-wrap">
+                <table class="fc-table">
+                    <thead>
+                        <tr>
+                            <SortableHeader State="table" Column="Payment" Label="Payment" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Column="Date" Label="Date" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Column="Member" Label="Member" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Column="Settles" Label="Settles" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Column="Method" Label="Method" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Column="Reference" Label="Reference" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Column="Status" Label="Status" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Column="Amount" Label="Amount" CssClass="fc-right" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Label="Actions" CssClass="fc-right" />
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var payment in PageRows)
+                        {
+                            <tr class="@(payment.Status == "Refunded" ? "is-muted" : "")">
+                                <td class="fc-id">#@payment.PaymentId</td>
+                                <td class="fc-nowrap fc-small">@payment.PaymentDate.ToLocalTime().ToString("d MMM yyyy HH:mm")</td>
+                                <td>
+                                    <span class="fc-cell-strong">@payment.MemberName</span>
+                                    <span class="fc-cell-sub">#@payment.MemberId</span>
+                                </td>
+                                <td>
+                                    <span class="fc-chip">@payment.AppliesTo</span>
+                                </td>
+                                <td>@payment.Method</td>
+                                <td class="fc-id">@(string.IsNullOrWhiteSpace(payment.ReferenceNo) ? "-" : payment.ReferenceNo)</td>
+                                <td><StatusBadge Status="@payment.Status" /></td>
+                                <td class="fc-right fc-num fc-strong">@payment.Amount.ToString("N2")</td>
+                                <td class="fc-right">
+                                    <span class="fc-actions">
+                                        <button class="fc-act" title="View payment" @onclick="() => detail = payment">
+                                            <Icon Name="eye" Size="14" />
+                                        </button>
+                                        <button class="fc-act" title="Edit payment"
+                                                disabled="@(payment.Status == "Refunded")"
+                                                @onclick="() => OpenEdit(payment)">
+                                            <Icon Name="edit" Size="14" />
+                                        </button>
+                                        <button class="fc-act is-danger" title="Void this payment"
+                                                disabled="@(payment.Status == "Refunded")"
+                                                @onclick="() => AskVoid(payment)">
+                                            <Icon Name="ban" Size="14" />
+                                        </button>
+                                    </span>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                    <tfoot>
+                        <tr>
+                            <td colspan="7">Settled total for the rows shown</td>
+                            <td class="fc-right fc-num">
+                                @Filtered.Where(p => p.Status == "Completed").Sum(p => p.Amount).ToString("N2")
+                            </td>
+                            <td></td>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+
+            <Pagination State="table" OnChanged="StateHasChanged" />
+        }
+    </div>
+</div>
+
+<!-- ------------------------------------------------------------------ Record / edit -->
+
+<Modal IsOpen="showEditor" Title="@(editingId is null ? "Record payment" : $"Edit payment #{editingId}")"
+       Subtitle="A payment settles a membership or a sale, or neither." OnClose="CloseEditor">
+    <ChildContent>
+        <Alert Message="@formError" Kind="error" />
+
+        @if (editingId is null)
+        {
+            <div class="fc-field">
+                <label class="fc-label" for="pay-member">Member<span class="fc-req">*</span></label>
+                <select id="pay-member" class="fc-select" value="@form.MemberId"
+                        @onchange="OnMemberChangedAsync">
+                    <option value="0">Select a member…</option>
+                    @foreach (var member in members.OrderBy(m => m.FirstName))
+                    {
+                        <option value="@member.MemberId">@member.FirstName @member.LastName (#@member.MemberId)</option>
+                    }
+                </select>
+            </div>
+
+            <div class="fc-field">
+                <label class="fc-label" for="pay-target">What is this settling?</label>
+                <select id="pay-target" class="fc-select" value="@target" @onchange="OnTargetChanged">
+                    <option value="general">Nothing in particular (general payment)</option>
+                    <option value="sale">A sale</option>
+                    <option value="subscription">A membership</option>
+                </select>
+            </div>
+
+            @if (target == "sale")
+            {
+                <div class="fc-field">
+                    <label class="fc-label" for="pay-sale">Sale<span class="fc-req">*</span></label>
+                    <select id="pay-sale" class="fc-select" value="@selectedSaleId" @onchange="OnSaleChanged">
+                        <option value="">Select a sale…</option>
+                        @foreach (var sale in memberSales)
+                        {
+                            <option value="@sale.SaleId">
+                                #@sale.SaleId - @sale.SaleDate.ToLocalTime().ToString("d MMM") -
+                                owes @sale.Balance.ToString("N2")
+                            </option>
+                        }
+                    </select>
+                    @if (form.MemberId > 0 && memberSales.Count == 0)
+                    {
+                        <span class="fc-hint">This member has no outstanding sales.</span>
+                    }
+                </div>
+            }
+            else if (target == "subscription")
+            {
+                <div class="fc-field">
+                    <label class="fc-label" for="pay-sub">Membership<span class="fc-req">*</span></label>
+                    <select id="pay-sub" class="fc-select" @bind="selectedSubscriptionId">
+                        <option value="">Select a membership…</option>
+                        @foreach (var subscription in memberSubscriptions)
+                        {
+                            <option value="@subscription.SubscriptionId">
+                                #@subscription.SubscriptionId -
+                                @subscription.StartDate.ToLocalTime().ToString("d MMM yyyy") to
+                                @subscription.EndDate.ToLocalTime().ToString("d MMM yyyy")
+                                (@subscription.Status)
+                            </option>
+                        }
+                    </select>
+                    @if (form.MemberId > 0 && memberSubscriptions.Count == 0)
+                    {
+                        <span class="fc-hint">This member has no memberships on file.</span>
+                    }
+                </div>
+            }
+
+            @if (target == "sale" && SelectedSale is not null)
+            {
+                <div class="fc-alert fc-alert-info">
+                    <Icon Name="info" Size="16" />
+                    <div class="fc-alert-body">
+                        Sale #@SelectedSale.SaleId totals
+                        <strong class="fc-num">@SelectedSale.TotalAmount.ToString("N2")</strong>
+                        and still owes <strong class="fc-num">@SelectedSale.Balance.ToString("N2")</strong>.
+                    </div>
+                </div>
+            }
+        }
+
+        <div class="fc-form-grid">
+            <div class="fc-field">
+                <label class="fc-label" for="pay-amt">Amount<span class="fc-req">*</span></label>
+                <input id="pay-amt" type="number" min="0.01" step="0.01" class="fc-input" @bind="form.Amount" />
+            </div>
+
+            <div class="fc-field">
+                <label class="fc-label" for="pay-method-form">Method</label>
+                <select id="pay-method-form" class="fc-select" @bind="form.Method">
+                    <option value="Cash">Cash</option>
+                    <option value="Card">Card</option>
+                    <option value="Transfer">Transfer</option>
+                    <option value="Check">Check</option>
+                    <option value="GCash">GCash</option>
+                </select>
+            </div>
+
+            <div class="fc-field">
+                <label class="fc-label" for="pay-date-form">Payment date</label>
+                <input id="pay-date-form" type="date" class="fc-input" @bind="paymentDate" />
+            </div>
+
+            <div class="fc-field">
+                <label class="fc-label" for="pay-status-form">Status</label>
+                <select id="pay-status-form" class="fc-select" @bind="form.Status">
+                    <option value="Completed">Completed</option>
+                    <option value="Pending">Pending</option>
+                    <option value="Failed">Failed</option>
+                    <option value="Refunded">Refunded</option>
+                </select>
+                <span class="fc-hint">Only completed payments count towards a balance.</span>
+            </div>
+
+            <div class="fc-field">
+                <label class="fc-label" for="pay-ref-form">Reference number</label>
+                <input id="pay-ref-form" class="fc-input" @bind="form.ReferenceNo" />
+            </div>
+
+            <div class="fc-field fc-span-2">
+                <label class="fc-label" for="pay-notes-form">Notes</label>
+                <textarea id="pay-notes-form" class="fc-textarea" @bind="form.Notes"></textarea>
+            </div>
+        </div>
+    </ChildContent>
+
+    <Footer>
+        <button class="fc-btn fc-btn-secondary" @onclick="CloseEditor" disabled="@isSaving">Cancel</button>
+        <button class="fc-btn fc-btn-success" @onclick="SaveAsync" disabled="@isSaving">
+            @if (isSaving)
+            {
+                <span class="fc-spinner is-sm"></span>
+            }
+            else
+            {
+                <Icon Name="check" Size="15" />
+            }
+            @(editingId is null ? "Record payment" : "Save changes")
+        </button>
+    </Footer>
+</Modal>
+
+<!-- ------------------------------------------------------------------ Detail -->
+
+<Modal IsOpen="detail is not null" Title="@($"Payment #{detail?.PaymentId}")"
+       Subtitle="@detail?.MemberName" OnClose="() => detail = null" CloseOnBackdropClick="true">
+    <ChildContent>
+        @if (detail is not null)
+        {
+            <dl class="fc-dl">
+                <dt>Amount</dt><dd class="fc-num fc-strong">@detail.Amount.ToString("N2")</dd>
+                <dt>Status</dt><dd><StatusBadge Status="@detail.Status" /></dd>
+                <dt>Date</dt><dd>@detail.PaymentDate.ToLocalTime().ToString("d MMMM yyyy, HH:mm")</dd>
+                <dt>Member</dt><dd>@detail.MemberName (#@detail.MemberId)</dd>
+                <dt>Settles</dt><dd>@detail.AppliesTo</dd>
+                <dt>Method</dt><dd>@detail.Method</dd>
+                <dt>Reference</dt><dd>@(string.IsNullOrWhiteSpace(detail.ReferenceNo) ? "-" : detail.ReferenceNo)</dd>
+                <dt>Notes</dt><dd>@(string.IsNullOrWhiteSpace(detail.Notes) ? "-" : detail.Notes)</dd>
+            </dl>
+        }
+    </ChildContent>
+
+    <Footer>
+        <button class="fc-btn fc-btn-secondary" @onclick="() => detail = null">Close</button>
+    </Footer>
+</Modal>
+
+<ConfirmDialog IsOpen="pendingVoid is not null"
+               Title="Void this payment?"
+               Message="@($"Payment #{pendingVoid?.PaymentId} of {pendingVoid?.Amount:N2} will be marked Refunded.")"
+               Warning="The record is kept so the ledger stays auditable. Any sale it was settling will go back to owing this amount."
+               ConfirmText="Void payment"
+               IsBusy="isSaving"
+               OnConfirm="ConfirmVoidAsync"
+               OnCancel="() => pendingVoid = null">
+    <Extra>
+        <div class="fc-field">
+            <label class="fc-label" for="void-reason">Reason</label>
+            <input id="void-reason" class="fc-input" @bind="voidReason" placeholder="e.g. duplicate entry" />
+        </div>
+    </Extra>
+</ConfirmDialog>
+
+@code {
+    private readonly List<PageHeader.Crumb> crumbs = new() { new("Operations"), new("Payments") };
+
+    private List<PaymentViewDto> payments = new();
+    private List<MemberDto> members = new();
+    private List<SaleViewDto> allSales = new();
+    private List<SubscriptionDto> memberSubscriptions = new();
+    private PaymentSummaryDto? summary;
+
+    private bool isLoading = true;
+    private string? pageError;
+
+    private readonly TableState<PaymentViewDto> table =
+        new TableState<PaymentViewDto>(defaultSort: "Date", descending: true)
+            .Column("Payment", p => p.PaymentId)
+            .Column("Date", p => p.PaymentDate)
+            .Column("Member", p => p.MemberName)
+            .Column("Settles", p => p.AppliesTo)
+            .Column("Method", p => p.Method)
+            .Column("Reference", p => p.ReferenceNo)
+            .Column("Status", p => p.Status)
+            .Column("Amount", p => p.Amount);
+
+    private string searchTerm = "";
+    private string methodFilter = "";
+    private string statusFilter = "";
+    private DateTime? fromDate;
+    private DateTime? toDate;
+
+    private bool showEditor;
+    private int? editingId;
+    private RecordPaymentDto form = new();
+    private DateTime paymentDate = DateTime.Today;
+    private string target = "general";
+    private string selectedSaleId = "";
+    private string selectedSubscriptionId = "";
+    private string? formError;
+    private bool isSaving;
+
+    private PaymentViewDto? detail;
+    private PaymentViewDto? pendingVoid;
+    private string voidReason = "";
+
+    protected override Task OnInitializedAsync() => ReloadAsync();
+
+    private async Task ReloadAsync()
+    {
+        isLoading = true;
+        pageError = null;
+
+        var result = await PaymentApi.GetAllAsync(fromDate, toDate);
+
+        if (result.IsSuccess)
+        {
+            payments = result.Value ?? new();
+        }
+        else
+        {
+            pageError = result.ErrorMessage;
+        }
+
+        var summaryResult = await PaymentApi.GetSummaryAsync();
+        if (summaryResult.IsSuccess) summary = summaryResult.Value;
+
+        isLoading = false;
+    }
+
+    private List<CategorySliceDto> MethodSlices => summary is null
+        ? new()
+        : summary.ByMethod
+            .Select(m => new CategorySliceDto { Label = m.Method, Value = m.Total, Count = m.Count })
+            .ToList();
+
+    private List<PaymentViewDto> Filtered
+    {
+        get
+        {
+            IEnumerable<PaymentViewDto> query = payments;
+
+            if (!string.IsNullOrWhiteSpace(searchTerm))
+            {
+                var term = searchTerm.Trim();
+                query = query.Where(p =>
+                    p.MemberName.Contains(term, StringComparison.OrdinalIgnoreCase) ||
+                    p.ReferenceNo.Contains(term, StringComparison.OrdinalIgnoreCase) ||
+                    p.AppliesTo.Contains(term, StringComparison.OrdinalIgnoreCase) ||
+                    p.PaymentId.ToString() == term.TrimStart('#'));
+            }
+
+            if (!string.IsNullOrEmpty(methodFilter))
+                query = query.Where(p => p.Method == methodFilter);
+
+            if (!string.IsNullOrEmpty(statusFilter))
+                query = query.Where(p => p.Status == statusFilter);
+
+            return query.ToList();
+        }
+    }
+
+    /// <summary>The filtered payments, sorted and cut down to the page on screen.</summary>
+    private List<PaymentViewDto> PageRows => table.Apply(Filtered);
+
+    private void OnSearchInput(ChangeEventArgs args) => searchTerm = args.Value?.ToString() ?? "";
+
+    private Task ClearFiltersAsync()
+    {
+        searchTerm = "";
+        methodFilter = "";
+        statusFilter = "";
+        fromDate = null;
+        toDate = null;
+        return ReloadAsync();
+    }
+
+    private List<SaleViewDto> memberSales = new();
+
+    private SaleViewDto? SelectedSale =>
+        int.TryParse(selectedSaleId, out var id) ? memberSales.FirstOrDefault(s => s.SaleId == id) : null;
+
+    private async Task OpenCreateAsync()
+    {
+        editingId = null;
+        form = new RecordPaymentDto { Method = "Cash", Status = "Completed" };
+        paymentDate = DateTime.Today;
+        target = "general";
+        selectedSaleId = "";
+        selectedSubscriptionId = "";
+        memberSales = new();
+        memberSubscriptions = new();
+        formError = null;
+        showEditor = true;
+
+        var memberResult = await MemberApi.GetAllAsync();
+        if (memberResult.IsSuccess) members = memberResult.Value ?? new();
+
+        var saleResult = await SaleApi.GetAllAsync();
+        if (saleResult.IsSuccess) allSales = saleResult.Value ?? new();
+    }
+
+    private async Task OnMemberChangedAsync(ChangeEventArgs args)
+    {
+        form.MemberId = int.TryParse(args.Value?.ToString(), out var id) ? id : 0;
+        selectedSaleId = "";
+        selectedSubscriptionId = "";
+
+        // Only this member's own records are offered, which is also what the server enforces.
+        memberSales = allSales
+            .Where(s => s.MemberId == form.MemberId && s.Status != "Cancelled" && s.Balance > 0)
+            .ToList();
+
+        memberSubscriptions = new();
+
+        if (form.MemberId > 0)
+        {
+            var result = await SubscriptionApi.GetForMemberAsync(form.MemberId);
+            if (result.IsSuccess) memberSubscriptions = result.Value ?? new();
+        }
+    }
+
+    private void OnTargetChanged(ChangeEventArgs args)
+    {
+        target = args.Value?.ToString() ?? "general";
+        selectedSaleId = "";
+        selectedSubscriptionId = "";
+    }
+
+    private void OnSaleChanged(ChangeEventArgs args)
+    {
+        selectedSaleId = args.Value?.ToString() ?? "";
+
+        // Default the amount to whatever the sale still owes, which is the usual case.
+        if (SelectedSale is not null) form.Amount = SelectedSale.Balance;
+    }
+
+    private void OpenEdit(PaymentViewDto payment)
+    {
+        editingId = payment.PaymentId;
+        form = new RecordPaymentDto
+        {
+            MemberId = payment.MemberId,
+            SaleId = payment.SaleId,
+            SubscriptionId = payment.SubscriptionId,
+            Amount = payment.Amount,
+            Method = payment.Method,
+            ReferenceNo = payment.ReferenceNo,
+            Status = payment.Status,
+            Notes = payment.Notes
+        };
+        paymentDate = payment.PaymentDate.ToLocalTime().Date;
+        formError = null;
+        showEditor = true;
+    }
+
+    private void CloseEditor()
+    {
+        showEditor = false;
+        editingId = null;
+        formError = null;
+    }
+
+    private async Task SaveAsync()
+    {
+        formError = null;
+
+        if (form.Amount <= 0)
+        {
+            formError = "Enter an amount greater than zero.";
+            return;
+        }
+
+        if (editingId is null)
+        {
+            if (form.MemberId <= 0)
+            {
+                formError = "Select the member this payment came from.";
+                return;
+            }
+
+            if (target == "sale" && !int.TryParse(selectedSaleId, out _))
+            {
+                formError = "Select the sale this payment settles.";
+                return;
+            }
+
+            if (target == "subscription" && !int.TryParse(selectedSubscriptionId, out _))
+            {
+                formError = "Select the membership this payment settles.";
+                return;
+            }
+        }
+
+        isSaving = true;
+
+        bool succeeded;
+        string? message;
+
+        if (editingId is null)
+        {
+            form.SaleId = target == "sale" && int.TryParse(selectedSaleId, out var saleId) ? saleId : null;
+            form.SubscriptionId = target == "subscription" &&
+                                  int.TryParse(selectedSubscriptionId, out var subId) ? subId : null;
+            form.PaymentDate = paymentDate;
+
+            var result = await PaymentApi.RecordAsync(form);
+            succeeded = result.IsSuccess;
+            message = result.ErrorMessage;
+        }
+        else
+        {
+            var result = await PaymentApi.UpdateAsync(editingId.Value, new UpdatePaymentDto
+            {
+                Amount = form.Amount,
+                PaymentDate = paymentDate,
+                Method = form.Method,
+                ReferenceNo = form.ReferenceNo,
+                Status = form.Status,
+                Notes = form.Notes
+            });
+
+            succeeded = result.IsSuccess;
+            message = result.ErrorMessage;
+        }
+
+        isSaving = false;
+
+        if (!succeeded)
+        {
+            formError = message;
+            return;
+        }
+
+        Toasts.Success($"{form.Amount:N2} was {(editingId is null ? "recorded" : "updated")}.");
+        CloseEditor();
+        await ReloadAsync();
+    }
+
+    private void AskVoid(PaymentViewDto payment)
+    {
+        pendingVoid = payment;
+        voidReason = "";
+    }
+
+    private async Task ConfirmVoidAsync()
+    {
+        if (pendingVoid is null) return;
+
+        isSaving = true;
+
+        var result = await PaymentApi.VoidAsync(
+            pendingVoid.PaymentId, new VoidPaymentDto { Reason = voidReason });
+
+        isSaving = false;
+
+        if (!result.IsSuccess)
+        {
+            pageError = result.ErrorMessage;
+            pendingVoid = null;
+            return;
+        }
+
+        Toasts.Success($"Payment #{pendingVoid.PaymentId} was voided.", "Payment refunded");
+        pendingVoid = null;
+        await ReloadAsync();
+    }
+}

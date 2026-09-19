@@ -1,0 +1,425 @@
+@page "/fitcore/reports"
+@inject ReportsApiService ReportsApi
+
+@*
+    Reports.
+
+    Every tab queries a dedicated endpoint for the selected date range: api/reports/sales,
+    /payments, /inventory, /membership and /expenses. Nothing here is computed in the browser
+    beyond simple sums of numbers the server already returned; the aggregation happens against
+    the tenant database on each request.
+*@
+
+<PageTitle>Reports - FitCore ERP</PageTitle>
+
+<PageHeader Title="Reports"
+            Description="Sales, payments, inventory, membership and expenses, filtered by date."
+            Crumbs="crumbs" />
+
+<div class="fc-filters">
+    <div class="fc-filter">
+        <label class="fc-label" for="rep-from">From</label>
+        <input id="rep-from" type="date" class="fc-input" @bind="fromDate" />
+    </div>
+
+    <div class="fc-filter">
+        <label class="fc-label" for="rep-to">To</label>
+        <input id="rep-to" type="date" class="fc-input" @bind="toDate" />
+    </div>
+
+    <div class="fc-filter">
+        <label class="fc-label">Quick range</label>
+        <div class="fc-row">
+            <button class="fc-btn fc-btn-secondary fc-btn-sm" @onclick="() => ApplyPreset(0)">Today</button>
+            <button class="fc-btn fc-btn-secondary fc-btn-sm" @onclick="() => ApplyPreset(7)">7 days</button>
+            <button class="fc-btn fc-btn-secondary fc-btn-sm" @onclick="() => ApplyPreset(30)">30 days</button>
+            <button class="fc-btn fc-btn-secondary fc-btn-sm" @onclick="ApplyThisMonth">This month</button>
+        </div>
+    </div>
+
+    <button class="fc-btn fc-btn-primary" @onclick="LoadActiveReportAsync">
+        <Icon Name="filter" Size="14" /> Apply
+    </button>
+</div>
+
+<div class="fc-report-tabs">
+    <button class="fc-tab @(tab == Tab.Sales ? "active" : "")" @onclick='() => SwitchTab(Tab.Sales)'>
+        <Icon Name="sales" Size="15" /> Sales
+    </button>
+    <button class="fc-tab @(tab == Tab.Payments ? "active" : "")" @onclick='() => SwitchTab(Tab.Payments)'>
+        <Icon Name="payment" Size="15" /> Payments
+    </button>
+    <button class="fc-tab @(tab == Tab.Inventory ? "active" : "")" @onclick='() => SwitchTab(Tab.Inventory)'>
+        <Icon Name="inventory" Size="15" /> Inventory
+    </button>
+    <button class="fc-tab @(tab == Tab.Membership ? "active" : "")" @onclick='() => SwitchTab(Tab.Membership)'>
+        <Icon Name="members" Size="15" /> Membership
+    </button>
+    <button class="fc-tab @(tab == Tab.Expenses ? "active" : "")" @onclick='() => SwitchTab(Tab.Expenses)'>
+        <Icon Name="expense" Size="15" /> Expenses
+    </button>
+</div>
+
+<Alert Message="@pageError" Kind="error" OnDismiss="() => pageError = null" />
+
+@if (isLoading)
+{
+    <div class="fc-card"><LoadingState Message="Querying the database…" /></div>
+}
+else
+{
+    @switch (tab)
+    {
+        case Tab.Sales when salesReport is not null:
+            <div class="fc-kpi-grid">
+                <StatCard Label="Transactions" Value="@salesReport.TransactionCount.ToString("N0")"
+                          Hint="@($"{salesReport.CancelledCount:N0} cancelled")" Icon="sales" Tone="blue" />
+                <StatCard Label="Gross sales" Value="@salesReport.GrossSales.ToString("N2")" Icon="money" Tone="slate" />
+                <StatCard Label="Net sales" Value="@salesReport.NetSales.ToString("N2")"
+                          Hint="@($"{salesReport.Discounts:N2} discounted")" Icon="trend-up" Tone="green" />
+                <StatCard Label="Units sold" Value="@salesReport.UnitsSold.ToString("N0")" Icon="box" Tone="slate" />
+                <StatCard Label="Average sale" Value="@salesReport.AverageSale.ToString("N2")" Icon="reports" Tone="blue" />
+                <StatCard Label="Outstanding" Value="@salesReport.Outstanding.ToString("N2")"
+                          Tone="@(salesReport.Outstanding > 0 ? "amber" : "green")" Icon="alert" />
+            </div>
+
+            <div class="fc-card fc-mb">
+                <div class="fc-card-head"><h3 class="fc-card-title">Sales over time</h3></div>
+                <div class="fc-card-body">
+                    <LineChart Points="salesReport.ByDay" Title="Sales" EmptyMessage="No sales in this range." />
+                </div>
+            </div>
+
+            <div class="fc-split fc-mb">
+                <div class="fc-card">
+                    <div class="fc-card-head"><h3 class="fc-card-title">Top products</h3></div>
+                    <div class="fc-card-body is-flush">
+                        @if (salesReport.TopProducts.Count == 0)
+                        {
+                            <EmptyState Title="No products sold in this range" Icon="product" />
+                        }
+                        else
+                        {
+                            <div class="fc-table-wrap">
+                                <table class="fc-table">
+                                    <thead>
+                                        <tr><th>Product</th><th class="fc-right">Qty</th><th class="fc-right">Revenue</th><th class="fc-right">Margin</th></tr>
+                                    </thead>
+                                    <tbody>
+                                        @foreach (var product in salesReport.TopProducts)
+                                        {
+                                            <tr>
+                                                <td>@product.ProductName<span class="fc-cell-sub">@product.ProductCode</span></td>
+                                                <td class="fc-right fc-num">@product.QuantitySold.ToString("N0")</td>
+                                                <td class="fc-right fc-num fc-strong">@product.Revenue.ToString("N2")</td>
+                                                <td class="fc-right fc-num @(product.Margin >= 0 ? "fc-pos" : "fc-neg")">@product.Margin.ToString("N2")</td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        }
+                    </div>
+                </div>
+
+                <div class="fc-card">
+                    <div class="fc-card-head"><h3 class="fc-card-title">Revenue by category</h3></div>
+                    <div class="fc-card-body">
+                        <DonutChart Slices="salesReport.ByCategory" CentreLabel="revenue" Title="By category"
+                                    EmptyMessage="No sales in this range." />
+                    </div>
+                </div>
+            </div>
+            break;
+
+        case Tab.Payments when paymentReport is not null:
+            <div class="fc-kpi-grid">
+                <StatCard Label="Collected" Value="@paymentReport.TotalCollected.ToString("N2")" Icon="money" Tone="green" />
+                <StatCard Label="Payments" Value="@paymentReport.Count.ToString("N0")" Icon="payment" Tone="blue" />
+                <StatCard Label="Pending" Value="@paymentReport.Pending.ToString("N2")" Icon="info" Tone="amber" />
+                <StatCard Label="Refunded" Value="@paymentReport.Refunded.ToString("N2")" Icon="ban" Tone="red" />
+                <StatCard Label="Outstanding" Value="@paymentReport.TotalOutstanding.ToString("N2")"
+                          Hint="@($"{paymentReport.OutstandingFromSales:N2} sales, {paymentReport.OutstandingFromMemberships:N2} memberships")"
+                          Icon="alert" Tone="@(paymentReport.TotalOutstanding > 0 ? "amber" : "green")" />
+            </div>
+
+            <div class="fc-split fc-mb">
+                <div class="fc-card">
+                    <div class="fc-card-head"><h3 class="fc-card-title">Collections over time</h3></div>
+                    <div class="fc-card-body">
+                        <LineChart Points="paymentReport.ByDay" Title="Payments" EmptyMessage="No payments in this range." />
+                    </div>
+                </div>
+                <div class="fc-card">
+                    <div class="fc-card-head"><h3 class="fc-card-title">By method</h3></div>
+                    <div class="fc-card-body">
+                        <DonutChart Slices="paymentReport.ByMethod" CentreLabel="collected" Title="By method"
+                                    EmptyMessage="No settled payments in this range." />
+                    </div>
+                </div>
+            </div>
+
+            <div class="fc-card">
+                <div class="fc-card-head">
+                    <h3 class="fc-card-title">Outstanding balances</h3>
+                    <span class="fc-chip">
+                        @paymentReport.PaidCount paid &middot; @paymentReport.PartiallyPaidCount partial &middot; @paymentReport.UnpaidCount unpaid
+                    </span>
+                </div>
+                <div class="fc-card-body is-flush">
+                    @if (paymentReport.Outstanding.Count == 0)
+                    {
+                        <EmptyState Title="Nothing is outstanding" Icon="check" />
+                    }
+                    else
+                    {
+                        <div class="fc-table-wrap">
+                            <table class="fc-table">
+                                <thead>
+                                    <tr><th>Source</th><th>Member</th><th>Date</th><th class="fc-right">Total</th><th class="fc-right">Paid</th><th class="fc-right">Balance</th><th>Status</th></tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var row in paymentReport.Outstanding)
+                                    {
+                                        <tr>
+                                            <td><span class="fc-chip">@row.Source #@row.ReferenceId</span></td>
+                                            <td>@row.MemberName</td>
+                                            <td class="fc-small fc-nowrap">@row.Date.ToLocalTime().ToString("d MMM yyyy")</td>
+                                            <td class="fc-right fc-num">@row.Total.ToString("N2")</td>
+                                            <td class="fc-right fc-num">@row.Paid.ToString("N2")</td>
+                                            <td class="fc-right fc-num fc-neg fc-strong">@row.Balance.ToString("N2")</td>
+                                            <td><StatusBadge Status="@row.Status" /></td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+                </div>
+            </div>
+            break;
+
+        case Tab.Inventory when inventoryReport is not null:
+            <div class="fc-kpi-grid">
+                <StatCard Label="Total products" Value="@inventoryReport.Summary.TotalProducts.ToString("N0")" Icon="product" Tone="blue" />
+                <StatCard Label="In stock" Value="@inventoryReport.Summary.InStock.ToString("N0")" Icon="check" Tone="green" />
+                <StatCard Label="Low stock" Value="@inventoryReport.Summary.LowStock.ToString("N0")" Icon="alert"
+                          Tone="@(inventoryReport.Summary.LowStock > 0 ? "amber" : "green")" />
+                <StatCard Label="Out of stock" Value="@inventoryReport.Summary.OutOfStock.ToString("N0")" Icon="ban"
+                          Tone="@(inventoryReport.Summary.OutOfStock > 0 ? "red" : "green")" />
+                <StatCard Label="Stock value" Value="@inventoryReport.Summary.StockValue.ToString("N2")" Icon="money" Tone="slate" />
+            </div>
+
+            <div class="fc-split fc-mb">
+                <div class="fc-card">
+                    <div class="fc-card-head"><h3 class="fc-card-title">Value by category</h3></div>
+                    <div class="fc-card-body">
+                        <DonutChart Slices="inventoryReport.ValueByCategory" CentreLabel="stock value" Title="By category"
+                                    EmptyMessage="No products have been added yet." />
+                    </div>
+                </div>
+
+                <div class="fc-card">
+                    <div class="fc-card-head"><h3 class="fc-card-title">Needs attention</h3></div>
+                    <div class="fc-card-body is-flush">
+                        @if (inventoryReport.LowStock.Count == 0 && inventoryReport.OutOfStock.Count == 0)
+                        {
+                            <EmptyState Title="Stock levels look healthy" Icon="check" />
+                        }
+                        else
+                        {
+                            <div class="fc-table-wrap">
+                                <table class="fc-table">
+                                    <thead><tr><th>Product</th><th class="fc-right">On hand</th><th>Status</th></tr></thead>
+                                    <tbody>
+                                        @foreach (var row in inventoryReport.OutOfStock.Concat(inventoryReport.LowStock))
+                                        {
+                                            <tr>
+                                                <td>@row.ProductName<span class="fc-cell-sub">@row.ProductCode</span></td>
+                                                <td class="fc-right fc-num">@row.QuantityOnHand.ToString("N0")</td>
+                                                <td><StatusBadge Status="@row.StockStatus" /></td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        }
+                    </div>
+                </div>
+            </div>
+
+            <div class="fc-card">
+                <div class="fc-card-head"><h3 class="fc-card-title">Movements in range</h3></div>
+                <div class="fc-card-body is-flush">
+                    @if (inventoryReport.Movements.Count == 0)
+                    {
+                        <EmptyState Title="No stock movements in this range" Icon="reports" />
+                    }
+                    else
+                    {
+                        <div class="fc-table-wrap">
+                            <table class="fc-table">
+                                <thead><tr><th>Date</th><th>Product</th><th>Type</th><th class="fc-right">Qty</th><th>Reference</th></tr></thead>
+                                <tbody>
+                                    @foreach (var movement in inventoryReport.Movements.Take(50))
+                                    {
+                                        <tr>
+                                            <td class="fc-small fc-nowrap">@movement.MovementDate.ToLocalTime().ToString("d MMM HH:mm")</td>
+                                            <td>@movement.ProductName</td>
+                                            <td><span class="fc-badge tone-slate">@movement.MovementType</span></td>
+                                            <td class="fc-right fc-num">@movement.Quantity.ToString("N0")</td>
+                                            <td class="fc-id">@movement.Reference</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+                </div>
+            </div>
+            break;
+
+        case Tab.Membership when membershipReport is not null:
+            <div class="fc-kpi-grid">
+                <StatCard Label="Total members" Value="@membershipReport.TotalMembers.ToString("N0")" Icon="members" Tone="blue" />
+                <StatCard Label="Active" Value="@membershipReport.ActiveMembers.ToString("N0")" Icon="check" Tone="green" />
+                <StatCard Label="New in range" Value="@membershipReport.NewMembersInRange.ToString("N0")" Icon="trend-up" Tone="blue" />
+                <StatCard Label="Expiring soon" Value="@membershipReport.ExpiringSoon.ToString("N0")" Icon="alert" Tone="amber" />
+                <StatCard Label="Expired" Value="@membershipReport.ExpiredSubscriptions.ToString("N0")" Icon="ban" Tone="red" />
+                <StatCard Label="Revenue" Value="@membershipReport.MembershipRevenue.ToString("N2")"
+                          Hint="@($"{membershipReport.MembershipOutstanding:N2} outstanding")" Icon="money" Tone="green" />
+            </div>
+
+            <div class="fc-split fc-mb">
+                <div class="fc-card">
+                    <div class="fc-card-head"><h3 class="fc-card-title">New members</h3></div>
+                    <div class="fc-card-body">
+                        <LineChart Points="membershipReport.JoinsByDay" Title="Joins" EmptyMessage="No new members in this range." />
+                    </div>
+                </div>
+                <div class="fc-card">
+                    <div class="fc-card-head"><h3 class="fc-card-title">By plan</h3></div>
+                    <div class="fc-card-body">
+                        <DonutChart Slices="membershipReport.ByPlan" ShowCounts="true" CentreLabel="subscriptions" Title="By plan"
+                                    EmptyMessage="No subscriptions have been sold yet." />
+                    </div>
+                </div>
+            </div>
+            break;
+
+        case Tab.Expenses when expenseReport is not null:
+            <div class="fc-kpi-grid">
+                <StatCard Label="Expenses" Value="@expenseReport.Count.ToString("N0")" Icon="expense" Tone="blue" />
+                <StatCard Label="Total" Value="@expenseReport.Total.ToString("N2")" Icon="money" Tone="slate" />
+                <StatCard Label="Payroll paid" Value="@expenseReport.PayrollPaid.ToString("N2")" Icon="payroll" Tone="slate" />
+                <StatCard Label="Total outgoings" Value="@expenseReport.TotalOutgoings.ToString("N2")" Icon="trend-up" Tone="red" />
+            </div>
+
+            <div class="fc-split fc-mb">
+                <div class="fc-card">
+                    <div class="fc-card-head"><h3 class="fc-card-title">Expenses over time</h3></div>
+                    <div class="fc-card-body">
+                        <LineChart Points="expenseReport.ByDay" Title="Expenses" EmptyMessage="No expenses in this range." />
+                    </div>
+                </div>
+                <div class="fc-card">
+                    <div class="fc-card-head"><h3 class="fc-card-title">By category</h3></div>
+                    <div class="fc-card-body">
+                        <DonutChart Slices="expenseReport.ByCategory" CentreLabel="spent" Title="By category"
+                                    EmptyMessage="No expenses in this range." />
+                    </div>
+                </div>
+            </div>
+            break;
+
+        default:
+            <div class="fc-card"><EmptyState Title="No data for this range" Icon="reports" /></div>
+            break;
+    }
+}
+
+@code {
+    private readonly List<PageHeader.Crumb> crumbs = new() { new("Insight"), new("Reports") };
+
+    private enum Tab { Sales, Payments, Inventory, Membership, Expenses }
+    private Tab tab = Tab.Sales;
+
+    private DateTime? fromDate = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
+    private DateTime? toDate = DateTime.Today;
+
+    private bool isLoading = true;
+    private string? pageError;
+
+    private SalesReportDto? salesReport;
+    private PaymentReportDto? paymentReport;
+    private InventoryReportDto? inventoryReport;
+    private MembershipReportDto? membershipReport;
+    private ExpenseReportDto? expenseReport;
+
+    protected override Task OnInitializedAsync() => LoadActiveReportAsync();
+
+    private void SwitchTab(Tab next)
+    {
+        tab = next;
+        _ = LoadActiveReportAsync();
+    }
+
+    private void ApplyPreset(int days)
+    {
+        toDate = DateTime.Today;
+        fromDate = days == 0 ? DateTime.Today : DateTime.Today.AddDays(-days);
+        _ = LoadActiveReportAsync();
+    }
+
+    private void ApplyThisMonth()
+    {
+        fromDate = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
+        toDate = DateTime.Today;
+        _ = LoadActiveReportAsync();
+    }
+
+    /// <summary>
+    /// Loads only the report for the tab currently in view. Switching tabs fetches on demand
+    /// rather than pre-loading every report on every visit.
+    /// </summary>
+    private async Task LoadActiveReportAsync()
+    {
+        isLoading = true;
+        pageError = null;
+
+        switch (tab)
+        {
+            case Tab.Sales:
+                var salesResult = await ReportsApi.GetSalesReportAsync(fromDate, toDate);
+                if (salesResult.IsSuccess) salesReport = salesResult.Value;
+                else pageError = salesResult.ErrorMessage;
+                break;
+
+            case Tab.Payments:
+                var paymentResult = await ReportsApi.GetPaymentReportAsync(fromDate, toDate);
+                if (paymentResult.IsSuccess) paymentReport = paymentResult.Value;
+                else pageError = paymentResult.ErrorMessage;
+                break;
+
+            case Tab.Inventory:
+                var inventoryResult = await ReportsApi.GetInventoryReportAsync(fromDate, toDate);
+                if (inventoryResult.IsSuccess) inventoryReport = inventoryResult.Value;
+                else pageError = inventoryResult.ErrorMessage;
+                break;
+
+            case Tab.Membership:
+                var membershipResult = await ReportsApi.GetMembershipReportAsync(fromDate, toDate);
+                if (membershipResult.IsSuccess) membershipReport = membershipResult.Value;
+                else pageError = membershipResult.ErrorMessage;
+                break;
+
+            case Tab.Expenses:
+                var expenseResult = await ReportsApi.GetExpenseReportAsync(fromDate, toDate);
+                if (expenseResult.IsSuccess) expenseReport = expenseResult.Value;
+                else pageError = expenseResult.ErrorMessage;
+                break;
+        }
+
+        isLoading = false;
+    }
+}

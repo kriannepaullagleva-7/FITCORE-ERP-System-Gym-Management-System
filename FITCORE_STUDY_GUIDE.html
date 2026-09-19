@@ -1,0 +1,1153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FitCore ERP — Architecture &amp; Presentation Study Guide</title>
+<style>
+  :root{
+    --ink:#16202e; --muted:#5b6b7f; --line:#d7e0ec; --bg:#ffffff; --soft:#f4f7fc;
+    --blue:#4d82de; --blue-dark:#2f5fb3; --pale:#e6edfb; --green:#1f9254; --orange:#c8720d; --red:#c0392b;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:16px/1.65 "Segoe UI",system-ui,-apple-system,sans-serif;}
+  .wrap{max-width:1000px;margin:0 auto;padding:40px 28px 90px}
+  header.cover{border-bottom:4px solid var(--blue);padding-bottom:26px;margin-bottom:30px}
+  header.cover h1{font-size:2.3rem;margin:0 0 6px;letter-spacing:-.5px}
+  header.cover p.sub{margin:0;color:var(--muted);font-size:1.05rem}
+  header.cover .meta{margin-top:14px;font-size:.85rem;color:var(--muted)}
+  h2{margin:52px 0 14px;padding-bottom:8px;border-bottom:2px solid var(--line);font-size:1.5rem;color:var(--blue-dark)}
+  h3{margin:30px 0 10px;font-size:1.15rem}
+  h4{margin:22px 0 8px;font-size:1rem;color:var(--muted);text-transform:uppercase;letter-spacing:.6px}
+  p,li{color:var(--ink)}
+  code{background:var(--soft);border:1px solid var(--line);border-radius:4px;padding:1px 5px;
+       font-family:Consolas,"Cascadia Mono",monospace;font-size:.88em}
+  pre{background:#101a29;color:#e6edf6;border-radius:8px;padding:16px 18px;overflow-x:auto;
+      font-family:Consolas,"Cascadia Mono",monospace;font-size:.83rem;line-height:1.55}
+  pre .c{color:#7f9cc0;font-style:italic}
+  pre .k{color:#7fc7ff}
+  pre .s{color:#9bdba0}
+  pre.ascii{background:var(--soft);color:var(--ink);border:1px solid var(--line);font-size:.78rem;line-height:1.35}
+  table{border-collapse:collapse;width:100%;margin:14px 0;font-size:.9rem}
+  th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+  th{background:var(--pale);font-weight:600}
+  tr:nth-child(even) td{background:#fbfcfe}
+  .note{border-left:4px solid var(--blue);background:var(--soft);padding:12px 16px;margin:16px 0;border-radius:0 6px 6px 0}
+  .warn{border-left:4px solid var(--orange);background:#fff8ee;padding:12px 16px;margin:16px 0;border-radius:0 6px 6px 0}
+  .key{border-left:4px solid var(--green);background:#f1faf4;padding:12px 16px;margin:16px 0;border-radius:0 6px 6px 0}
+  .pill{display:inline-block;background:var(--pale);color:var(--blue-dark);border-radius:20px;
+        padding:2px 11px;font-size:.78rem;font-weight:600;margin-right:6px}
+  .toc{background:var(--soft);border:1px solid var(--line);border-radius:8px;padding:18px 26px}
+  .toc ol{margin:0;padding-left:20px;columns:2;column-gap:36px}
+  .toc li{margin:3px 0;break-inside:avoid}
+  .toc a{color:var(--blue-dark);text-decoration:none}
+  .toc a:hover{text-decoration:underline}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+  .card{border:1px solid var(--line);border-radius:8px;padding:14px 18px;background:#fff}
+  .card h5{margin:0 0 6px;font-size:.95rem;color:var(--blue-dark)}
+  .qa{border:1px solid var(--line);border-radius:8px;padding:14px 18px;margin:12px 0;background:#fff}
+  .qa .q{font-weight:600;color:var(--blue-dark);margin:0 0 6px}
+  .qa .a{margin:0;color:var(--ink)}
+  .method{font-weight:700;font-family:Consolas,monospace;font-size:.82rem}
+  .get{color:var(--green)} .post{color:var(--blue-dark)} .put{color:var(--orange)}
+  .del{color:var(--red)} .patch{color:#7b4bc0}
+  footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--line);color:var(--muted);font-size:.85rem}
+  @media print{
+    body{font-size:11.5pt} .wrap{max-width:none;padding:0}
+    h2{page-break-after:avoid} pre,table,.qa,.card{page-break-inside:avoid}
+    .toc ol{columns:2}
+  }
+  @media (max-width:760px){ .grid2{grid-template-columns:1fr} .toc ol{columns:1} }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="cover">
+  <h1>FitCore ERP — Architecture &amp; Presentation Study Guide</h1>
+  <p class="sub">How the system is layered, how CRUD actually flows end to end, where MVC fits, and what the controllers, DTOs, services and repositories each do.</p>
+  <div class="meta">
+    Solution: <code>ERP_Project1.slnx</code> &nbsp;•&nbsp; 5 projects &nbsp;•&nbsp; .NET 10 / C# 12 &nbsp;•&nbsp; EF Core 10 &nbsp;•&nbsp; SQL Server<br>
+    Generated 2026-09-16 from the actual source in the repository — every class, method and endpoint named below exists in the code.
+  </div>
+</header>
+
+<div class="toc">
+  <strong>Contents</strong>
+  <ol>
+    <li><a href="#pitch">The 60-second pitch</a></li>
+    <li><a href="#solution">Solution structure &amp; project dependencies</a></li>
+    <li><a href="#layers">The layered architecture</a></li>
+    <li><a href="#mvc">Where MVC fits (the honest answer)</a></li>
+    <li><a href="#domain">Domain layer — the entities</a></li>
+    <li><a href="#data">Data layer — DbContext, Fluent API, migrations</a></li>
+    <li><a href="#repo">Repository layer — generic + specific</a></li>
+    <li><a href="#service">Service layer — the business rules</a></li>
+    <li><a href="#dto">DTOs — what, why, and the full catalogue</a></li>
+    <li><a href="#controllers">Controllers &amp; the API surface</a></li>
+    <li><a href="#crud">CRUD walkthroughs (traced line by line)</a></li>
+    <li><a href="#di">Dependency injection &amp; lifetimes</a></li>
+    <li><a href="#tenant">Multi-tenancy (Master vs Tenant DB)</a></li>
+    <li><a href="#errors">Error handling strategy</a></li>
+    <li><a href="#erd">Data model / ERD</a></li>
+    <li><a href="#endpoints">Endpoint reference table</a></li>
+    <li><a href="#run">How to build, run and demo</a></li>
+    <li><a href="#slides">Suggested presentation outline</a></li>
+    <li><a href="#qa">Likely panel questions &amp; answers</a></li>
+    <li><a href="#glossary">Glossary</a></li>
+  </ol>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="pitch">1. The 60-second pitch</h2>
+
+<p><strong>FitCore ERP</strong> is a gym / fitness-facility management system. It manages five business modules — <span class="pill">Dashboard</span><span class="pill">Membership</span><span class="pill">Sales</span><span class="pill">Payment</span><span class="pill">Inventory</span> — over a single SQL Server database, exposed through two independent front ends that share one business core:</p>
+
+<ul>
+  <li>a <strong>Windows Forms desktop app</strong> (<code>ERP_Project1</code>) used by front-desk staff, and</li>
+  <li>an <strong>ASP.NET Core REST API</strong> (<code>ERP_api</code>) that exposes the same operations over HTTP, consumed by a Blazor WebAssembly client (<code>ERP_UI</code>) and usable by any future mobile app.</li>
+</ul>
+
+<div class="key">
+<strong>The single most important architectural point to make in your presentation:</strong> the business logic lives in <em>neither</em> front end. It lives in <code>ERP_infrastructure</code> (services + repositories) on top of <code>ERP_domain</code> (entities). The WinForms app and the Web API are both thin <em>clients</em> of that core. Add a mobile app tomorrow and you write zero new business rules.
+</div>
+
+<!-- ============================================================ -->
+<h2 id="solution">2. Solution structure &amp; project dependencies</h2>
+
+<p>The solution file <code>ERP_Project1.slnx</code> contains five projects:</p>
+
+<table>
+<tr><th>Project</th><th>Type</th><th>Role</th><th>Depends on</th></tr>
+<tr><td><code>ERP_domain</code></td><td>Class library</td><td><strong>Domain layer.</strong> Plain C# entity classes (POCOs). No EF attributes, no UI, no HTTP.</td><td>Nothing</td></tr>
+<tr><td><code>ERP_infrastructure</code></td><td>Class library</td><td><strong>Data access + business logic.</strong> DbContexts, migrations, repositories, services, view models.</td><td><code>ERP_domain</code></td></tr>
+<tr><td><code>ERP_api</code></td><td>ASP.NET Core Web API</td><td><strong>Presentation (web).</strong> Minimal-API endpoints + DTOs + mappings.</td><td><code>ERP_domain</code>, <code>ERP_infrastructure</code></td></tr>
+<tr><td><code>ERP_Project1</code></td><td>Windows Forms</td><td><strong>Presentation (desktop).</strong> <code>MainForm</code> shell + 8 module forms.</td><td><code>ERP_domain</code>, <code>ERP_infrastructure</code></td></tr>
+<tr><td><code>ERP_UI</code></td><td>Blazor WebAssembly</td><td><strong>Presentation (browser).</strong> Talks to <code>ERP_api</code> over <code>HttpClient</code>. Has its <em>own</em> copy of the DTOs.</td><td>Nothing (HTTP only)</td></tr>
+</table>
+
+<h4>Dependency direction — the rule that makes this "clean"</h4>
+<pre class="ascii">
+   ERP_Project1 (WinForms)        ERP_api (REST)              ERP_UI (Blazor WASM)
+          │                            │                              │
+          │  project reference         │  project reference           │  HTTP / JSON only
+          └──────────┬─────────────────┘                              │
+                     ▼                                                │
+           ERP_infrastructure  ◄────────────────────────────────── (over the wire)
+        (services, repositories, DbContext, migrations)
+                     │
+                     ▼
+               ERP_domain
+             (entity classes)
+                     │
+                     ▼
+              SQL Server
+        (TenantErp + MasterErp)
+</pre>
+
+<div class="note">
+<strong>Arrows only ever point inward/down.</strong> <code>ERP_domain</code> references nothing — it does not even know EF Core exists. That means the business entities are testable and reusable, and you could swap SQL Server for PostgreSQL by changing only <code>ERP_infrastructure</code>. This is the <em>Dependency Rule</em> from Clean / Onion architecture.
+</div>
+
+<!-- ============================================================ -->
+<h2 id="layers">3. The layered architecture</h2>
+
+<pre class="ascii">
+┌──────────────────────────────────────────────────────────────────────────────┐
+│  PRESENTATION LAYER                                                          │
+│                                                                              │
+│  WinForms (ERP_Project1)          REST API (ERP_api)        Blazor (ERP_UI)  │
+│  ├─ MainForm      (shell/nav)     ├─ Program.cs endpoints   ├─ Members.razor │
+│  ├─ DashboardForm                 ├─ DTOs/                  └─ MembershipPl. │
+│  ├─ MembershipForm   Form1        ├─ ApiMappings.cs                          │
+│  ├─ SubscriptionForm MembershipPlanForm                                      │
+│  ├─ SalesForm  PaymentForm  InventoryForm                                    │
+│  Responsibility: collect input, show results, report errors. NO rules.       │
+└─────────────────────────────────┬────────────────────────────────────────────┘
+                                  │  interfaces only (IMemberService, …)
+                                  ▼  resolved by Dependency Injection
+┌──────────────────────────────────────────────────────────────────────────────┐
+│  APPLICATION / SERVICE LAYER            ERP_infrastructure/services/          │
+│                                                                              │
+│  MemberService  MembershipPlanService  SubscriptionService  PaymentService    │
+│  SaleService    ProductService         InventoryService     DashboardService  │
+│                                                                              │
+│  Responsibility: validate input, enforce business rules, orchestrate multiple │
+│  repositories, run transactions, build read-models (MembershipView, SaleView).│
+└─────────────────────────────────┬────────────────────────────────────────────┘
+                                  │  interfaces only (IMemberRepository, …)
+                                  ▼
+┌──────────────────────────────────────────────────────────────────────────────┐
+│  DATA ACCESS / REPOSITORY LAYER         ERP_infrastructure/repositories/      │
+│                                                                              │
+│  GenericRepository&lt;T&gt;  ← base: GetById / GetAll / Add / Update / Delete      │
+│      ▲                                                                       │
+│      ├─ MemberRepository        ├─ SaleRepository      ├─ PaymentRepository   │
+│      ├─ SubscriptionRepository  ├─ ProductRepository   ├─ InventoryRepository │
+│                                                                              │
+│  Responsibility: LINQ queries, Include() joins, translate to SQL. NO rules.   │
+└─────────────────────────────────┬────────────────────────────────────────────┘
+                                  ▼
+┌──────────────────────────────────────────────────────────────────────────────┐
+│  PERSISTENCE LAYER                      ERP_infrastructure/data/              │
+│  TenantErpDbContext (business data)   MasterErpDbContext (tenant registry)    │
+│  + Fluent API configuration + EF Core Migrations                              │
+└─────────────────────────────────┬────────────────────────────────────────────┘
+                                  ▼
+                   SQL Server:  TenantErp   |   MasterErp
+</pre>
+
+<h4>Why each layer exists — the one-line justification for each</h4>
+<table>
+<tr><th>Layer</th><th>If you deleted it, what breaks?</th></tr>
+<tr><td>Domain</td><td>Nothing would have a shared vocabulary; every layer would invent its own "Member".</td></tr>
+<tr><td>Persistence</td><td>You'd hand-write SQL strings everywhere; no migrations, no type safety.</td></tr>
+<tr><td>Repository</td><td>Query code (<code>Include</code>, <code>Where</code>, <code>ToListAsync</code>) would leak into business logic, making it untestable without a database.</td></tr>
+<tr><td>Service</td><td>Business rules would be duplicated in <em>every</em> UI — the WinForms delete guard and the API delete guard would drift apart.</td></tr>
+<tr><td>Presentation</td><td>No user.</td></tr>
+</table>
+
+<!-- ============================================================ -->
+<h2 id="mvc">4. Where MVC fits (the honest answer)</h2>
+
+<div class="warn">
+<strong>Be precise here — panels love this question.</strong> FitCore is <em>not</em> a textbook ASP.NET MVC application. There are no <code>Views/</code> folders, no Razor <code>.cshtml</code> pages rendered server-side, and no <code>ViewBag</code>. It is an <strong>N-tier / Clean-style layered architecture</strong>, and each of its three front ends uses a <em>different</em> MVC-family pattern on top of that shared core. Saying "it's MVC" without qualification is the trap; saying the following is the strong answer.
+</div>
+
+<h3>4.1 The Model–View–Controller mapping, per front end</h3>
+
+<table>
+<tr><th></th><th>Model</th><th>View</th><th>Controller</th><th>Pattern name</th></tr>
+<tr>
+  <td><strong>WinForms</strong></td>
+  <td><code>Member</code> entity + <code>MemberService</code> + <code>MemberRepository</code></td>
+  <td><code>Form1.Designer.cs</code> — the <code>DataGridView</code>, textboxes, buttons</td>
+  <td><code>Form1.cs</code> — the <code>btnAdd_Click</code> / <code>btnUpdate_Click</code> / <code>btnDelete_Click</code> event handlers</td>
+  <td>MVC-derived <em>Document–View</em>: View and Controller are fused into the Form class (classic for desktop UI), but the Model is fully separated.</td>
+</tr>
+<tr>
+  <td><strong>REST API</strong></td>
+  <td>Entities + services; DTOs as the wire model</td>
+  <td>The JSON response body (there is no HTML view — the client renders)</td>
+  <td>The lambda registered by <code>app.MapPost("/fitcore/3/members", …)</code> in <code>Program.cs</code></td>
+  <td><em>API / Minimal-API MVC</em>: "View" degenerates into content negotiation. Each endpoint delegate is a controller action.</td>
+</tr>
+<tr>
+  <td><strong>Blazor</strong></td>
+  <td>DTO classes in <code>ERP_UI/DTOs/</code></td>
+  <td>The Razor markup in <code>Members.razor</code></td>
+  <td>The <code>@code { }</code> block of the same file</td>
+  <td><em>MVVM / component model</em> — the component is both View and ViewModel, bound with <code>@bind</code>.</td>
+</tr>
+</table>
+
+<h3>4.2 The line to say out loud</h3>
+<div class="key">
+"FitCore separates <strong>Model</strong> (domain entities + services + repositories) from <strong>View</strong> (forms, JSON, Razor) with a <strong>Controller</strong> layer in between (form event handlers on the desktop, minimal-API endpoint delegates on the web). Because the Model layer sits in its own class library, the <em>same</em> Model is driven by three different controllers. That's the payoff of MVC applied at solution scale, rather than the ASP.NET MVC project template."
+</div>
+
+<h3>4.3 Proof that the separation is real, not cosmetic</h3>
+<p>The clinching example: the rule "a member with history cannot be deleted" is written <strong>once</strong>, in <code>MemberService.DeleteMemberAsync</code>. Both controllers consume the same <code>MemberDeleteResult</code> enum and merely translate it into their own idiom:</p>
+
+<pre><span class="c">// The Model decides. ERP_infrastructure/services/MemberService.cs</span>
+<span class="k">public async</span> Task&lt;MemberDeleteResult&gt; DeleteMemberAsync(<span class="k">int</span> id)
+{
+    <span class="k">var</span> member = <span class="k">await</span> _repository.GetByIdAsync(id);
+    <span class="k">if</span> (member == <span class="k">null</span>) <span class="k">return</span> MemberDeleteResult.NotFound;
+
+    <span class="k">var</span> history = <span class="k">await</span> _repository.GetHistoryCountsAsync(id);
+    <span class="k">if</span> (history.HasAny) <span class="k">return</span> MemberDeleteResult.HasHistory;
+
+    <span class="k">var</span> deleted = <span class="k">await</span> _repository.DeleteAsync(id);
+    <span class="k">return</span> deleted ? MemberDeleteResult.Deleted : MemberDeleteResult.NotFound;
+}</pre>
+
+<pre><span class="c">// Controller A — the web. ERP_api/Program.cs</span>
+<span class="k">return</span> result <span class="k">switch</span>
+{
+    MemberDeleteResult.Deleted    =&gt; Results.NoContent(),        <span class="c">// HTTP 204</span>
+    MemberDeleteResult.HasHistory =&gt; Results.Conflict(...),      <span class="c">// HTTP 409</span>
+    _                             =&gt; Results.NotFound()          <span class="c">// HTTP 404</span>
+};
+
+<span class="c">// Controller B — the desktop. ERP_Project1/Form1.cs</span>
+<span class="k">switch</span> (result)
+{
+    <span class="k">case</span> MemberDeleteResult.Deleted:    MessageBox.Show(<span class="s">"Member deleted."</span>); <span class="k">break</span>;
+    <span class="k">case</span> MemberDeleteResult.HasHistory: MessageBox.Show(<span class="s">"…set status to Inactive instead."</span>); <span class="k">break</span>;
+    <span class="k">default</span>:                            MessageBox.Show(<span class="s">"That member no longer exists."</span>); <span class="k">break</span>;
+}</pre>
+
+<p>Same decision, two presentations. That is exactly what the C in MVC is for.</p>
+
+<!-- ============================================================ -->
+<h2 id="domain">5. Domain layer — the entities</h2>
+
+<p><code>ERP_domain/entities/</code> holds 13 POCO classes. They are split across the two databases:</p>
+
+<h4>Tenant (business) entities</h4>
+<table>
+<tr><th>Entity</th><th>Key</th><th>Notable properties</th><th>Navigations</th></tr>
+<tr><td><code>Member</code></td><td>MemberId</td><td>FirstName*, LastName*, Phone, Email, JoinDate, Status (Active/Inactive/Suspended), CreatedAt</td><td>Subscriptions, Sales, Payments</td></tr>
+<tr><td><code>MembershipPlan</code></td><td>PlanId</td><td>PlanName, DurationMonths, Price, Description, IsActive</td><td>Subscriptions</td></tr>
+<tr><td><code>Subscription</code></td><td>SubscriptionId</td><td>MemberId, PlanId, StartDate, EndDate, Status (Active/Expired/Cancelled)</td><td>Member, Plan, Payments</td></tr>
+<tr><td><code>Payment</code></td><td>PaymentId</td><td>MemberId, <em>nullable</em> SubscriptionId, Amount, PaymentDate, Method (Cash/Card/Transfer/Check/GCash), ReferenceNo, Status, Notes</td><td>Member, Subscription?</td></tr>
+<tr><td><code>Sale</code></td><td>SaleId</td><td>MemberId, SaleDate, TotalAmount</td><td>Member, Items</td></tr>
+<tr><td><code>SaleItem</code></td><td>SaleItemId</td><td>SaleId, ProductId, Quantity, UnitPrice</td><td>Sale, Product</td></tr>
+<tr><td><code>Product</code></td><td>ProductId</td><td>ProductCode, ProductName, UnitPrice, IsActive</td><td>—</td></tr>
+<tr><td><code>Inventory</code></td><td>InventoryId</td><td>ProductId, QuantityOnHand, ReorderLevel, LastUpdatedAt</td><td>Product</td></tr>
+<tr><td><code>StockMovement</code></td><td>StockMovementId</td><td>ProductId, MovementType (In/Out/Sale/Adjust), Quantity, <strong>BalanceAfter</strong>, Reference, Notes, MovementDate</td><td>Product</td></tr>
+<tr><td><code>Customer</code>, <code>Supplier</code></td><td>…Id</td><td>Code, Name, contact fields, IsActive</td><td>—</td></tr>
+</table>
+<p style="font-size:.85rem;color:var(--muted)">* <code>required string</code> — C# 11 required members, so the compiler itself refuses to construct a <code>Member</code> without a name.</p>
+
+<h4>Master (tenant registry) entities</h4>
+<table>
+<tr><th>Entity</th><th>Purpose</th></tr>
+<tr><td><code>Company</code></td><td>One row per gym/company using the system.</td></tr>
+<tr><td><code>CompanyDatabase</code></td><td>Where that company's data lives: <code>ServerName</code>, <code>DatabaseName</code>, <code>CredentialKey</code>, <code>IsActive</code>.</td></tr>
+<tr><td><code>Device</code></td><td>Registered client devices (Guid key) belonging to a company.</td></tr>
+</table>
+
+<div class="note">
+<strong>Talking point — "anemic vs rich domain model".</strong> These entities are deliberately <em>anemic</em>: data only, no methods. The behaviour sits in the service layer. That is a conscious trade-off — it keeps the domain project dependency-free and easy to serialise, at the cost of not being a full DDD rich model. Say so before the panel says it.
+</div>
+
+<h4>StockMovement — the audit-trail pattern worth highlighting</h4>
+<p><code>StockMovement</code> records <code>BalanceAfter</code> on every row. That turns inventory into an <strong>append-only ledger</strong>: you can reconstruct the stock level at any past moment and explain <em>why</em> it changed (<code>Reference = "SALE-42"</code>, <code>"VOID-42"</code>). Most student projects only store the current quantity — this is a genuine differentiator to point out.</p>
+
+<!-- ============================================================ -->
+<h2 id="data">6. Data layer — DbContext, Fluent API, migrations</h2>
+
+<h3>6.1 Two DbContexts</h3>
+<table>
+<tr><th>Context</th><th>Database</th><th>DbSets</th><th>Migrations folder</th></tr>
+<tr><td><code>TenantErpDbContext</code></td><td>TenantErp</td><td>Members, MembershipPlans, Subscriptions, Payments, Sales, SaleItems, Products, Inventories, StockMovements, Customers, Suppliers</td><td><code>Migrations/TenantErpDb/</code></td></tr>
+<tr><td><code>MasterErpDbContext</code></td><td>MasterErp</td><td>Companies, CompanyDatabases, Devices</td><td><code>Migrations/</code></td></tr>
+</table>
+
+<p>DbSets use the expression-bodied <code>Set&lt;T&gt;()</code> form, which avoids nullable-reference warnings:</p>
+<pre><span class="k">public</span> DbSet&lt;Member&gt; Members =&gt; Set&lt;Member&gt;();
+<span class="k">public</span> DbSet&lt;Subscription&gt; Subscriptions =&gt; Set&lt;Subscription&gt;();</pre>
+
+<h3>6.2 Fluent API configuration (code-first)</h3>
+<p>All mapping is done in <code>OnModelCreating</code>, delegated to one private method per aggregate — <code>ConfigureMembers</code>, <code>ConfigureSubscriptions</code>, <code>ConfigureSales</code>, <code>ConfigureSaleItems</code>, <code>ConfigurePayments</code>, <code>ConfigureProducts</code>, <code>ConfigureInventory</code>, <code>ConfigureStockMovements</code>, <code>ConfigureSuppliers</code>. No data-annotation attributes are used on the entities, which is what keeps <code>ERP_domain</code> free of an EF Core dependency.</p>
+
+<pre><span class="k">private void</span> ConfigureMembers(ModelBuilder builder)
+{
+    builder.Entity&lt;Member&gt;(entity =&gt;
+    {
+        entity.HasKey(x =&gt; x.MemberId);
+        entity.Property(x =&gt; x.FirstName).HasMaxLength(100).IsRequired();
+        entity.Property(x =&gt; x.Phone).HasMaxLength(20).IsRequired().HasDefaultValue(<span class="s">""</span>);
+        entity.Property(x =&gt; x.Status).HasMaxLength(20).IsRequired().HasDefaultValue(<span class="s">"Active"</span>);
+        entity.Property(x =&gt; x.JoinDate).IsRequired().HasDefaultValueSql(<span class="s">"GETUTCDATE()"</span>);
+    });
+}</pre>
+
+<p>Three configuration techniques are on display, and each is worth one sentence in the presentation:</p>
+<ul>
+  <li><code>HasMaxLength</code> / <code>IsRequired</code> → generates <code>NVARCHAR(100) NOT NULL</code> instead of <code>NVARCHAR(MAX)</code>. Storage and index efficiency.</li>
+  <li><code>HasPrecision(18, 2)</code> on every money column (<code>Price</code>, <code>Amount</code>, <code>TotalAmount</code>, <code>UnitPrice</code>) → <code>DECIMAL(18,2)</code>. Never float for currency.</li>
+  <li><code>HasDefaultValueSql("GETUTCDATE()")</code> → the database stamps the time, so rows inserted by a script or by SSMS are still valid.</li>
+</ul>
+
+<h3>6.3 Delete behaviour — the most interesting design decision in the schema</h3>
+<table>
+<tr><th>Relationship</th><th>OnDelete</th><th>Why</th></tr>
+<tr><td>Subscription → Member</td><td><code>Cascade</code></td><td>Deleting a member removes their subscriptions.</td></tr>
+<tr><td>Subscription → Plan</td><td><code>Restrict</code></td><td>A plan in use cannot be deleted; deactivate it instead.</td></tr>
+<tr><td>Sale → Member</td><td><code>Cascade</code></td><td>Same reasoning as subscriptions.</td></tr>
+<tr><td>SaleItem → Sale</td><td><code>Cascade</code></td><td>Line items have no life of their own — a true composition.</td></tr>
+<tr><td>SaleItem → Product</td><td><code>Restrict</code></td><td>A sold product must remain resolvable for history/receipts.</td></tr>
+<tr><td>Payment → Member</td><td><code>Cascade</code></td><td>Payment history belongs to the member.</td></tr>
+<tr><td><strong>Payment → Subscription</strong></td><td><strong><code>NoAction</code></strong></td><td><strong>Forced by SQL Server.</strong> Member→Subscription→Payment and Member→Payment are two cascade paths into the same table; SQL Server rejects multiple cascade paths, so the subscription leg must be <code>NoAction</code>.</td></tr>
+<tr><td>Inventory / StockMovement → Product</td><td><code>Cascade</code></td><td>Stock records are meaningless without their product.</td></tr>
+</table>
+
+<div class="key">
+<strong>Follow the thread all the way up.</strong> Because member deletes cascade, deleting a member would silently destroy their payments and sales. So <code>MemberRepository.GetHistoryCountsAsync</code> counts subscriptions + payments + sales, <code>MemberService</code> refuses the delete, and both UIs tell the user to set the status to <em>Inactive</em> instead. <strong>A database constraint drove a business rule, which drove a UI message.</strong> That is one coherent story across all four layers — it's the single best 90 seconds of your presentation.
+</div>
+
+<h3>6.4 Migrations</h3>
+<p>Nine tenant migrations record the evolution of the schema, and reading their names is a free project history:</p>
+<pre class="ascii">
+20260915121852_InitialTenantErp
+20260915145655_AddCustomersToTenantErp
+20260915172833_AddSuppliersAndInventoriesToTenantErp
+20260915173453_AddSuppliersToTenantErp
+20260915185227_AddFitcoreGymEntities          ← Members, Plans, Subscriptions, Sales, Payments
+20260915211044_UpdateMemberSchema
+20260915212000_AddMemberColumnDefaults
+20260915222733_UpdateFitcoreModels
+20260916003321_AddPaymentMemberLinkAndStockMovements   ← Payment.MemberId + stock ledger
+
+Master: InitialMasterErp → AddDeviceToMasterErp → AddCredentialKeyToCompanyDatabase
+</pre>
+
+<p>Because there are two contexts, every EF command must name one:</p>
+<pre>dotnet ef migrations add MyChange --context TenantErpDbContext
+dotnet ef database update            --context TenantErpDbContext
+dotnet ef database update            --context MasterErpDbContext</pre>
+
+<p><code>TenantErpDbContextFactory</code> and <code>MasterErpDbContextFactory</code> implement <code>IDesignTimeDbContextFactory&lt;T&gt;</code>. Without them the EF CLI cannot construct a context at design time (it has no <code>Program.cs</code> host to borrow from), and <code>dotnet ef</code> fails. Expect to be asked what those factories are for.</p>
+
+<!-- ============================================================ -->
+<h2 id="repo">7. Repository layer — generic + specific</h2>
+
+<h3>7.1 The generic base</h3>
+<p><code>GenericRepository&lt;T&gt;</code> implements the five operations every table needs, once, for all entity types:</p>
+
+<pre><span class="k">public class</span> GenericRepository&lt;T&gt; : IGenericRepository&lt;T&gt; <span class="k">where</span> T : <span class="k">class</span>
+{
+    <span class="k">protected readonly</span> TenantErpDbContext _context;
+    <span class="k">protected readonly</span> DbSet&lt;T&gt; _dbSet;
+
+    <span class="k">public</span> GenericRepository(TenantErpDbContext context)
+    {
+        _context = context;
+        _dbSet   = context.Set&lt;T&gt;();     <span class="c">// resolves the right table from the type</span>
+    }
+
+    <span class="k">public virtual async</span> Task&lt;T?&gt;       GetByIdAsync(<span class="k">int</span> id) =&gt; <span class="k">await</span> _dbSet.FindAsync(id);
+    <span class="k">public virtual async</span> Task&lt;List&lt;T&gt;&gt; GetAllAsync()        =&gt; <span class="k">await</span> _dbSet.ToListAsync();
+
+    <span class="k">public virtual async</span> Task&lt;T&gt; AddAsync(T entity)
+    { <span class="k">await</span> _dbSet.AddAsync(entity); <span class="k">await</span> SaveChangesAsync(); <span class="k">return</span> entity; }
+
+    <span class="k">public virtual async</span> Task&lt;T&gt; UpdateAsync(T entity)
+    { _dbSet.Update(entity); <span class="k">await</span> SaveChangesAsync(); <span class="k">return</span> entity; }
+
+    <span class="k">public virtual async</span> Task&lt;<span class="k">bool</span>&gt; DeleteAsync(<span class="k">int</span> id)
+    {
+        <span class="k">var</span> entity = <span class="k">await</span> GetByIdAsync(id);
+        <span class="k">if</span> (entity == <span class="k">null</span>) <span class="k">return false</span>;
+        _dbSet.Remove(entity); <span class="k">await</span> SaveChangesAsync(); <span class="k">return true</span>;
+    }
+}</pre>
+
+<p>Note <code>virtual</code> on every method — derived repositories can override, and <code>Set&lt;T&gt;()</code> is what makes one class serve eleven tables. That is generics + the repository pattern doing real work.</p>
+
+<h3>7.2 The specific repositories</h3>
+<p>Six repositories inherit the generic base and add queries that only make sense for their entity:</p>
+
+<table>
+<tr><th>Repository</th><th>Adds</th></tr>
+<tr><td><code>MemberRepository</code></td><td><code>GetMemberWithSubscriptionsAsync</code> (Include → ThenInclude Plan), <code>GetActiveMembers</code>, <code>SearchAsync</code>, <code>GetHistoryCountsAsync</code>, <code>GetMembersWithSubscriptionsAsync</code></td></tr>
+<tr><td><code>SubscriptionRepository</code></td><td><code>GetSubscriptionWithDetailsAsync</code>, <code>GetMemberSubscriptionsAsync</code>, <code>GetActiveSubscriptionsAsync</code>, <code>GetCurrentSubscriptionAsync</code>, <code>ExpireOverdueAsync</code></td></tr>
+<tr><td><code>SaleRepository</code></td><td><code>GetSaleWithItemsAsync</code>, <code>GetAllWithDetailsAsync</code>, <code>GetMemberSalesAsync</code></td></tr>
+<tr><td><code>PaymentRepository</code></td><td><code>GetSubscriptionPaidTotalAsync</code> (SUM pushed to SQL), member/subscription payment lists</td></tr>
+<tr><td><code>ProductRepository</code></td><td>active-product and code-uniqueness queries</td></tr>
+<tr><td><code>InventoryRepository</code></td><td>stock-on-hand and movement queries</td></tr>
+</table>
+
+<h4>Example worth quoting — server-side search</h4>
+<pre><span class="c">// Case-insensitive match across the fields shown in the member grid.</span>
+<span class="k">public async</span> Task&lt;List&lt;Member&gt;&gt; SearchAsync(<span class="k">string</span> term)
+{
+    <span class="k">if</span> (<span class="k">string</span>.IsNullOrWhiteSpace(term)) <span class="k">return await</span> GetAllAsync();
+
+    <span class="k">var</span> pattern = $<span class="s">"%{term.Trim()}%"</span>;
+
+    <span class="k">return await</span> _dbSet
+        .Where(m =&gt; EF.Functions.Like(m.FirstName, pattern) ||
+                    EF.Functions.Like(m.LastName,  pattern) ||
+                    EF.Functions.Like(m.Email,     pattern) ||
+                    EF.Functions.Like(m.Phone,     pattern))
+        .OrderBy(m =&gt; m.MemberId)
+        .ToListAsync();
+}</pre>
+<p><code>EF.Functions.Like</code> translates to a SQL <code>LIKE</code>, so the <em>database</em> filters and only matching rows cross the wire — as opposed to pulling every member into memory and filtering with LINQ-to-Objects. Good "efficiency" talking point.</p>
+
+<div class="note">
+<strong>Expect the question: "Isn't the repository pattern redundant over EF Core, since DbSet is already a repository?"</strong> Your answer: it is a real debate. Here it earns its place because (a) services depend on <code>IMemberRepository</code>, so they can be unit-tested with a fake and no database; (b) query shapes like the three-table history count are defined once instead of being retyped in each caller; and (c) the two front ends provably share them. The cost is an extra layer of indirection, which you accept knowingly.
+</div>
+
+<!-- ============================================================ -->
+<h2 id="service">8. Service layer — the business rules</h2>
+
+<p>Eight services, each behind an interface. This is where the project's actual intelligence lives; everything above is plumbing.</p>
+
+<table>
+<tr><th>Service</th><th>Key responsibilities</th></tr>
+<tr><td><code>MemberService</code></td><td>Trim + validate names; stamp JoinDate/CreatedAt/Status; the delete-history guard; build the membership overview.</td></tr>
+<tr><td><code>MembershipPlanService</code></td><td>CRUD on plans; <code>PlanDeleteResult.InUse</code> guard so a plan with subscriptions can't be deleted.</td></tr>
+<tr><td><code>SubscriptionService</code></td><td>Compute <code>EndDate = StartDate.AddMonths(plan.DurationMonths)</code>; renew; cancel; expire overdue in bulk.</td></tr>
+<tr><td><code>PaymentService</code></td><td>Record/update/void payments; validate that the subscription belongs to the member; status transitions.</td></tr>
+<tr><td><code>SaleService</code></td><td>Merge duplicate lines, validate quantities, compute totals, <strong>deduct stock inside a database transaction</strong>, write the stock ledger, restore stock on delete.</td></tr>
+<tr><td><code>ProductService</code></td><td>Product CRUD; create opening stock; block deletes of products with sales history.</td></tr>
+<tr><td><code>InventoryService</code></td><td>Stock in / stock out / adjust / reorder level, each writing a <code>StockMovement</code>.</td></tr>
+<tr><td><code>DashboardService</code></td><td>Aggregate ~18 KPIs; expires overdue subscriptions <em>before</em> counting so the figures are truthful.</td></tr>
+</table>
+
+<h3>8.1 Business rule #1 — derived membership status</h3>
+<p><code>MemberService.GetMembershipOverviewAsync</code> is a great slide because the status shown in the UI is <strong>computed, never stored</strong>:</p>
+
+<pre><span class="k">public const int</span> ExpiringSoonDays = <span class="s">14</span>;
+…
+<span class="c">// The subscription running furthest into the future decides the status.</span>
+<span class="k">var</span> current = member.Subscriptions
+    .Where(s =&gt; s.Status != <span class="s">"Cancelled"</span>)
+    .OrderByDescending(s =&gt; s.EndDate)
+    .FirstOrDefault()
+    ?? member.Subscriptions.OrderByDescending(s =&gt; s.EndDate).FirstOrDefault();
+
+<span class="k">var</span> daysRemaining = (<span class="k">int</span>)Math.Ceiling((current.EndDate.Date - today).TotalDays);
+
+<span class="k">if</span>      (current.Status == <span class="s">"Cancelled"</span>)        view.MembershipStatus = <span class="s">"Cancelled"</span>;
+<span class="k">else if</span> (daysRemaining &lt; <span class="s">0</span>)                 view.MembershipStatus = <span class="s">"Expired"</span>;
+<span class="k">else if</span> (daysRemaining &lt;= ExpiringSoonDays)  view.MembershipStatus = <span class="s">"Expiring Soon"</span>;
+<span class="k">else</span>                                        view.MembershipStatus = <span class="s">"Active"</span>;
+
+<span class="c">// …then payment status from what has actually been paid against the plan price</span>
+<span class="k">var</span> paid = <span class="k">await</span> _paymentRepository.GetSubscriptionPaidTotalAsync(current.SubscriptionId);
+view.Balance = Math.Max(<span class="s">0m</span>, view.PlanPrice - paid);
+view.PaymentStatus = paid &lt;= <span class="s">0m</span> ? <span class="s">"Unpaid"</span> : view.Balance &gt; <span class="s">0m</span> ? <span class="s">"Partial"</span> : <span class="s">"Paid"</span>;</pre>
+
+<p>Why this matters: a stored status column goes stale the moment a date passes. Deriving it means the grid is always correct without a nightly job. (The bulk <code>ExpireOverdueSubscriptionsAsync</code> exists to keep the <em>persisted</em> status column in sync for reporting, and the dashboard calls it first.)</p>
+
+<h3>8.2 Business rule #2 — the transactional sale</h3>
+<p><code>SaleService.CreateSaleAsync</code> is the most complex operation in the system. Walk it as a sequence:</p>
+
+<ol>
+  <li>Reject an empty basket; verify the member exists.</li>
+  <li><strong>Merge duplicate product lines</strong> by <code>GroupBy(ProductId)</code> so stock is checked against the true total, not line by line.</li>
+  <li>Validate every line: quantity &gt; 0, unit price ≥ 0.</li>
+  <li><code>BeginTransactionAsync()</code>.</li>
+  <li>Build the <code>Sale</code> with its <code>SaleItem</code>s, accumulating <code>TotalAmount</code>.</li>
+  <li><code>SaveChangesAsync()</code> — the sale now has an identity value.</li>
+  <li>For each line, <code>DeductStockAsync</code>: load inventory, throw if <code>QuantityOnHand &lt; quantity</code>, decrement, and append a <code>StockMovement</code> with <code>Reference = "SALE-{id}"</code> and <code>BalanceAfter</code>.</li>
+  <li><code>SaveChangesAsync()</code>, then <code>CommitAsync()</code>. Any exception → <code>RollbackAsync()</code> and rethrow.</li>
+</ol>
+
+<pre><span class="k">await using var</span> transaction = <span class="k">await</span> _context.Database.BeginTransactionAsync();
+<span class="k">try</span>
+{
+    … build sale, SaveChangesAsync() …
+
+    <span class="c">// Stock only moves once the sale itself has an id to reference.</span>
+    <span class="k">foreach</span> (<span class="k">var</span> line <span class="k">in</span> merged)
+        <span class="k">await</span> DeductStockAsync(line.ProductId, line.Quantity, sale.SaleId);
+
+    <span class="k">await</span> _context.SaveChangesAsync();
+    <span class="k">await</span> transaction.CommitAsync();
+    <span class="k">return</span> sale;
+}
+<span class="k">catch</span> { <span class="k">await</span> transaction.RollbackAsync(); <span class="k">throw</span>; }</pre>
+
+<div class="key">
+<strong>The demo that wins marks:</strong> try to sell 100 units of a product with 5 in stock. You get "Not enough stock for <em>Protein Bar</em>: 5 on hand, 100 requested" — and <em>no</em> sale row is created, because the transaction rolled back. That is ACID atomicity you can show on screen in ten seconds. Deleting a sale runs the mirror path: stock is returned with <code>Reference = "VOID-{id}"</code>.
+</div>
+
+<h3>8.3 Business rule #3 — fair renewal</h3>
+<pre><span class="c">// Renewing early extends from the existing end date rather than losing paid-for days.</span>
+<span class="k">var</span> renewFrom = subscription.EndDate &gt; DateTime.UtcNow ? subscription.EndDate : DateTime.UtcNow;
+subscription.StartDate = renewFrom;
+subscription.EndDate   = renewFrom.AddMonths(plan.DurationMonths);
+subscription.Status    = <span class="s">"Active"</span>;</pre>
+<p>Renew early and you keep your remaining days; renew after lapsing and the clock starts today. One ternary, one real-world policy — a good example of "business rule" that isn't just validation.</p>
+
+<h3>8.4 View models — the third kind of object</h3>
+<p>Alongside entities and DTOs there is a third family, living in <code>ERP_infrastructure/services/</code>. These are <strong>read models</strong> shaped for a specific screen:</p>
+
+<table>
+<tr><th>Type</th><th>Shape it serves</th></tr>
+<tr><td><code>MembershipView</code></td><td>The Membership grid: member fields + plan name/price + StartDate/ExpiryDate + DaysRemaining + MembershipStatus + AmountPaid/Balance/PaymentStatus — a join of 4 tables plus computed columns.</td></tr>
+<tr><td><code>SaleView</code> / <code>SaleLineView</code></td><td>Sales grid: MemberName pre-formatted, ItemCount, TotalQuantity, TotalAmount.</td></tr>
+<tr><td><code>PaymentView</code></td><td>Payment grid rows with the member/plan context already resolved.</td></tr>
+<tr><td><code>InventoryView</code></td><td>Product + quantity on hand + reorder level + stock state.</td></tr>
+<tr><td><code>DashboardSummary</code></td><td>18 KPIs: TotalMembers, ActiveMembers, ActiveSubscriptions, ExpiringSoon, ExpiredSubscriptions, TotalPlans, TotalProducts, LowStockProducts, OutOfStockProducts, InventoryValue, SalesCount/Total/ThisMonth, PaymentsCount/Total/ThisMonth, PendingPayments, GeneratedAtUtc.</td></tr>
+<tr><td><code>MemberHistoryCounts</code></td><td>Subscriptions/Payments/Sales counts + <code>HasAny</code> + <code>Describe()</code> for the delete-guard message.</td></tr>
+</table>
+
+<div class="note">
+<strong>Entity vs View Model vs DTO — the distinction the panel will probe.</strong><br>
+<strong>Entity</strong> = shaped by the <em>database</em> (has navigation properties, tracked by EF).<br>
+<strong>View model</strong> = shaped by a <em>screen</em> (flattened, pre-computed, in-process only).<br>
+<strong>DTO</strong> = shaped by the <em>wire</em> (serialisable, no cycles, versioned independently of the schema).<br>
+Three different audiences, so three different shapes. That's not duplication, it's decoupling.
+</div>
+
+<!-- ============================================================ -->
+<h2 id="dto">9. DTOs — what, why, and the full catalogue</h2>
+
+<h3>9.1 What a DTO is</h3>
+<p>A <strong>Data Transfer Object</strong> is a flat, behaviour-free class whose only job is to carry data across a boundary — here, the HTTP boundary between <code>ERP_api</code> and its clients. They live in <code>ERP_api/DTOs/</code>.</p>
+
+<h3>9.2 Why not just return the entities?</h3>
+<p>The code answers this itself, in the header comment of <code>ApiMappings.cs</code>:</p>
+<pre><span class="c">// Entities carry navigation properties in both directions, so returning them straight
+// from an endpoint serialises the whole object graph. These projections keep the
+// write endpoints returning the same shape their matching read endpoints do.</span></pre>
+
+<p>Four concrete reasons, in the order a panel will find convincing:</p>
+<ol>
+  <li><strong>Infinite recursion.</strong> <code>Member.Subscriptions → Subscription.Member → Subscription.Subscriptions…</code>. Serialising a raw entity either blows the cycle detector or dumps the entire database into one response.</li>
+  <li><strong>Over-posting / mass assignment.</strong> If <code>POST /members</code> bound directly to <code>Member</code>, a caller could set <code>MemberId</code>, <code>JoinDate</code> or <code>CreatedAt</code> themselves. <code>CreateMemberDto</code> exposes exactly four writable fields — the attack surface is the DTO, and nothing else is reachable.</li>
+  <li><strong>Contract stability.</strong> Rename an entity column and API clients keep working, because the DTO and the mapping absorb the change.</li>
+  <li><strong>Payload size.</strong> The client gets the seven fields it renders, not every audit column.</li>
+</ol>
+
+<h3>9.3 The three-DTO convention</h3>
+<p>Most resources have three DTOs, and the split is deliberate:</p>
+
+<pre><span class="k">public class</span> CreateMemberDto      <span class="c">// input for POST — no Id, no Status (server decides)</span>
+{ <span class="k">public string</span> FirstName, LastName, Phone, Email; }
+
+<span class="k">public class</span> UpdateMemberDto      <span class="c">// input for PUT — adds Status, still no Id (it's in the URL)</span>
+{ <span class="k">public string</span> FirstName, LastName, Phone, Email, Status = <span class="s">"Active"</span>; }
+
+<span class="k">public class</span> MemberDto            <span class="c">// output — adds MemberId and JoinDate, which are server-generated</span>
+{ <span class="k">public int</span> MemberId; <span class="k">public string</span> FirstName, LastName, Phone, Email;
+  <span class="k">public</span> DateTime JoinDate; <span class="k">public string</span> Status; }</pre>
+
+<div class="key">
+Ask yourself "why three?" before the panel does: <strong>Create</strong> can't accept an Id (the database issues it) or a JoinDate (the server stamps it). <strong>Update</strong> can accept Status but still not an Id. <strong>Read</strong> must return both. Different directions permit different fields — one shared class would have to allow the union of all of them, which is precisely the over-posting hole.
+</div>
+
+<h3>9.4 Full DTO catalogue</h3>
+<table>
+<tr><th>File</th><th>DTOs</th></tr>
+<tr><td><code>MemberDtos.cs</code></td><td><code>CreateMemberDto</code>, <code>UpdateMemberDto</code>, <code>MemberDto</code></td></tr>
+<tr><td><code>MembershipPlanDtos.cs</code></td><td><code>CreateMembershipPlanDto</code>, <code>UpdateMembershipPlanDto</code>, <code>MembershipPlanDto</code></td></tr>
+<tr><td><code>SubscriptionDtos.cs</code></td><td><code>CreateSubscriptionDto</code> (nullable <code>StartDate</code> → defaults to now), <code>UpdateSubscriptionDto</code>, <code>SubscriptionDto</code></td></tr>
+<tr><td><code>PaymentDtos.cs</code></td><td><code>CreatePaymentDto</code> (legacy subscription-scoped shorthand), <code>RecordPaymentDto</code> (full form), <code>UpdatePaymentDto</code>, <code>UpdatePaymentStatusDto</code> (single field, for PATCH), <code>PaymentDto</code></td></tr>
+<tr><td><code>SaleDtos.cs</code></td><td><code>CreateSaleItemDto</code>, <code>CreateSaleDto</code> (header + <code>List&lt;CreateSaleItemDto&gt;</code>), <code>SaleItemDto</code>, <code>SaleDto</code> — a <strong>nested/composite</strong> DTO</td></tr>
+<tr><td><code>ProductDtos.cs</code></td><td><code>CreateProductDto</code>, <code>UpdateProductDto</code>, <code>StockMovementRequestDto</code>, <code>StockAdjustmentDto</code>, <code>ReorderLevelDto</code> — <strong>command DTOs</strong>, not entity mirrors</td></tr>
+<tr><td><code>ApiMappings.cs</code></td><td>Extension methods <code>ToDto()</code> for <code>Member</code>, <code>Subscription</code>, <code>Payment</code>, <code>Sale</code></td></tr>
+</table>
+
+<p>Two patterns in that table deserve a callout:</p>
+<ul>
+  <li><strong><code>UpdatePaymentStatusDto</code> has exactly one property.</strong> It backs <code>PATCH /payments/{id}/status</code> — a partial update, distinct from a full <code>PUT</code>. Correct REST verb semantics.</li>
+  <li><strong><code>StockAdjustmentDto</code>, <code>ReorderLevelDto</code>, <code>StockMovementRequestDto</code> are commands, not rows.</strong> They model an <em>intent</em> ("adjust this product to 42 units, because…"), which is why they don't mirror any table.</li>
+</ul>
+
+<h3>9.5 Mapping — hand-written extension methods</h3>
+<pre><span class="k">public static class</span> ApiMappings
+{
+    <span class="k">public static</span> MemberDto ToDto(<span class="k">this</span> Member member) =&gt; <span class="k">new</span>()
+    {
+        MemberId = member.MemberId, FirstName = member.FirstName,
+        LastName = member.LastName, Phone = member.Phone,
+        Email    = member.Email,    JoinDate = member.JoinDate,
+        Status   = member.Status
+    };
+
+    <span class="k">public static</span> SaleDto ToDto(<span class="k">this</span> Sale sale) =&gt; <span class="k">new</span>()
+    {
+        SaleId = sale.SaleId, MemberId = sale.MemberId,
+        SaleDate = sale.SaleDate, TotalAmount = sale.TotalAmount,
+        Items = sale.Items.Select(i =&gt; <span class="k">new</span> SaleItemDto { … }).ToList()   <span class="c">// nested projection</span>
+    };
+}</pre>
+<p>Usage reads naturally at the call site: <code>Results.Ok(members.Select(m =&gt; m.ToDto()))</code>.</p>
+<p><strong>Why not AutoMapper?</strong> A defensible answer: hand-written mapping is compile-time checked, has zero reflection cost, needs no extra package, and is trivially debuggable — at this project size the convention-based tool would add a dependency and a configuration-error failure mode without saving meaningful code. Mention that you considered it.</p>
+
+<!-- ============================================================ -->
+<h2 id="controllers">10. Controllers &amp; the API surface</h2>
+
+<h3>10.1 Two controller styles coexist</h3>
+<p><code>ERP_api/Program.cs</code> registers both:</p>
+<pre>builder.Services.AddControllers();   <span class="c">// classic attribute-routed MVC controllers</span>
+…
+app.MapControllers();                <span class="c">// wires them up</span>
+app.MapGet(<span class="s">"/fitcore/3/members"</span>, …);  <span class="c">// minimal-API endpoints</span></pre>
+
+<table>
+<tr><th></th><th>Classic MVC controller</th><th>Minimal API (what FitCore uses)</th></tr>
+<tr><td>Where</td><td><code>Controllers/WeatherForecastController.cs</code> — the scaffolded template, still present, one demo endpoint</td><td><code>Program.cs</code> — all ~50 business endpoints</td></tr>
+<tr><td>Shape</td><td><code>[ApiController]</code> class, <code>[HttpGet]</code> methods, constructor injection</td><td><code>app.MapGet(route, delegate)</code>, parameter injection</td></tr>
+<tr><td>Returns</td><td><code>IActionResult</code></td><td><code>IResult</code> via <code>Results.Ok/Created/NotFound/Conflict/BadRequest/NoContent</code></td></tr>
+<tr><td>Trade-off</td><td>More ceremony; better for filters, model binding, large controllers</td><td>Less ceremony, lower overhead; one 700-line <code>Program.cs</code> is the cost</td></tr>
+</table>
+
+<div class="warn">
+<strong>Be ready for: "Where are your controllers?"</strong> Answer: the minimal-API delegates <em>are</em> the controller actions — same routing, same DI, same model binding, expressed as lambdas instead of methods. <code>WeatherForecastController</code> is the leftover project template and is not part of the business system. If asked to justify it, note the honest trade-off: with ~50 endpoints, <code>Program.cs</code> reaches 704 lines, and the natural refactor is to group them into extension methods (<code>MapMemberEndpoints(this WebApplication app)</code>) or to move to controller classes.
+</div>
+
+<h3>10.2 Anatomy of an endpoint</h3>
+<pre>app.MapPost(<span class="s">"/fitcore/3/members"</span>, <span class="k">async</span> (CreateMemberDto dto, IMemberService service) =&gt;
+{
+    <span class="k">var</span> member = <span class="k">await</span> service.CreateMemberAsync(dto.FirstName, dto.LastName, dto.Phone, dto.Email);
+    <span class="k">return</span> Results.Created($<span class="s">"/fitcore/3/members/{member.MemberId}"</span>, member.ToDto());
+})
+.WithName(<span class="s">"CreateMember"</span>)
+.WithOpenApi();</pre>
+
+<p>Five things happen in those six lines, and each is one bullet on a slide:</p>
+<ol>
+  <li><strong>Routing</strong> — the URL template binds the endpoint.</li>
+  <li><strong>Model binding</strong> — JSON body is deserialised into <code>CreateMemberDto</code> automatically.</li>
+  <li><strong>Dependency injection</strong> — <code>IMemberService</code> is resolved from the container per request; the endpoint never news up a service or a DbContext.</li>
+  <li><strong>Delegation</strong> — one call into the service. The controller contains <em>no</em> business logic.</li>
+  <li><strong>HTTP semantics</strong> — <code>201 Created</code> plus a <code>Location</code> header pointing at the new resource, body projected through <code>ToDto()</code>.</li>
+</ol>
+
+<h3>10.3 Status codes actually used</h3>
+<table>
+<tr><th>Code</th><th>When</th><th>Example</th></tr>
+<tr><td><code>200 OK</code></td><td>Successful read or update</td><td><code>GET /fitcore/3/members</code></td></tr>
+<tr><td><code>201 Created</code></td><td>Resource created, <code>Location</code> header set</td><td><code>POST /fitcore/3/members</code></td></tr>
+<tr><td><code>204 No Content</code></td><td>Successful delete</td><td><code>DELETE /fitcore/3/sales/{id}</code></td></tr>
+<tr><td><code>400 Bad Request</code></td><td>Business rule violated (insufficient stock, invalid quantity)</td><td><code>POST /fitcore/3/sales</code></td></tr>
+<tr><td><code>404 Not Found</code></td><td>Id doesn't exist</td><td><code>GET /fitcore/3/members/9999</code></td></tr>
+<tr><td><code>409 Conflict</code></td><td>Request understood but state forbids it</td><td><code>DELETE</code> a member with history; <code>DELETE</code> a plan in use</td></tr>
+</table>
+<p>Using <strong>409 rather than 400</strong> for the delete guards is a deliberate, correct choice: the request was well formed, but the current state of the resource conflicts with it. Small detail, strong signal.</p>
+
+<h3>10.4 Middleware pipeline</h3>
+<pre>builder.Services.AddDbContext&lt;MasterErpDbContext&gt;(…);
+builder.Services.AddDbContext&lt;TenantErpDbContext&gt;(…);
+builder.Services.AddCors(o =&gt; o.AddPolicy(<span class="s">"AllowAll"</span>, p =&gt; p.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader()));
+builder.Services.AddOpenApi();
+…
+<span class="k">if</span> (app.Environment.IsDevelopment()) app.MapOpenApi();   <span class="c">// OpenAPI doc only in dev</span>
+app.UseHttpsRedirection();
+app.UseCors(<span class="s">"AllowAll"</span>);
+app.UseAuthorization();
+app.MapControllers();</pre>
+<p>Order matters: HTTPS redirect → CORS → authorization → endpoints. <code>AllowAll</code> CORS exists so the Blazor client on a different port can call the API; flag it yourself as a development setting that must be narrowed to specific origins in production.</p>
+
+<div class="warn">
+<strong>Known gaps to disclose rather than be caught on:</strong> (1) <code>UseAuthorization()</code> is in the pipeline but no authentication is configured and no endpoint is <code>[Authorize]</code>d — the API is currently open. (2) <code>.WithOpenApi()</code> is deprecated in .NET 10; it still works but produces build warnings. (3) There is no test project. Listing your own known issues reads as engineering maturity.
+</div>
+
+<!-- ============================================================ -->
+<h2 id="crud">11. CRUD walkthroughs (traced line by line)</h2>
+
+<h3>11.1 CREATE — desktop path: clicking "Add" in the Member form</h3>
+<pre class="ascii">
+USER types First/Last/Phone/Email → clicks [Add Member]
+   │
+   ▼  Form1.cs : btnAdd_Click(sender, e)                          ── CONTROLLER (View layer)
+   ├─ if (_isBusy) return;                     guard against double-click
+   ├─ TryReadForm(out firstName, …)            read + pre-validate the textboxes
+   ├─ SetBusy(true)                            disable buttons, show wait cursor
+   │
+   ▼  IMemberService.CreateMemberAsync(first, last, phone, email)  ── SERVICE (Model)
+   ├─ Trim() both names
+   ├─ if blank → throw ValidationException("First name is required.")
+   ├─ new Member { …, JoinDate = UtcNow, Status = "Active", CreatedAt = UtcNow }
+   │
+   ▼  IMemberRepository.AddAsync(member)    → GenericRepository&lt;Member&gt;  ── REPOSITORY
+   ├─ _dbSet.AddAsync(entity)               EF marks the entity Added
+   ├─ _context.SaveChangesAsync()           ── DbContext
+   │
+   ▼  EF Core generates and executes:
+      INSERT INTO Members (FirstName, LastName, Phone, Email, JoinDate, Status, CreatedAt)
+      VALUES (@p0, …);  SELECT MemberId FROM …   ← identity value read back
+   │
+   ▼  back up the stack: member.MemberId is now populated
+   ├─ MessageBox.Show($"Member created. ID: {member.MemberId}")
+   ├─ ClearForm(); SetBusy(false)
+   └─ await LoadMembersAsync()               re-query so the grid shows the truth,
+                                             not an optimistic local guess
+</pre>
+
+<p>Two implementation details in <code>Form1.cs</code> worth pointing at:</p>
+<ul>
+  <li>The <code>_isBusy</code> flag plus <code>SetBusy()</code> prevents a double-click from inserting twice — a real concurrency bug in naive form code.</li>
+  <li>The grid is <strong>reloaded from the database</strong> after every write rather than patched in memory, so what the user sees is always what is stored.</li>
+</ul>
+
+<h3>11.2 CREATE — web path: the same operation over HTTP</h3>
+<pre class="ascii">
+POST https://localhost:7000/fitcore/3/members
+Content-Type: application/json
+{ "firstName":"Juan", "lastName":"Dela Cruz", "phone":"0917…", "email":"juan@x.com" }
+   │
+   ▼  ASP.NET routing matches app.MapPost("/fitcore/3/members", …)
+   ▼  Model binding      → CreateMemberDto
+   ▼  DI                 → IMemberService (scoped, one per request)
+   ▼  service.CreateMemberAsync(...)        ← IDENTICAL service call as the desktop
+   ▼  repository → DbContext → INSERT        ← IDENTICAL data path
+   ▼  member.ToDto()                          project entity → MemberDto
+   ▼  Results.Created("/fitcore/3/members/7", dto)
+
+HTTP/1.1 201 Created
+Location: /fitcore/3/members/7
+{ "memberId":7, "firstName":"Juan", …, "joinDate":"2026-09-16T…", "status":"Active" }
+</pre>
+<div class="key">Put these two diagrams side by side on one slide. The bottom three-quarters is byte-for-byte the same code. <em>That</em> is the architecture paying for itself, and it is far more persuasive than any prose description of "layers".</div>
+
+<h3>11.3 READ — search</h3>
+<p><code>txtSearch</code> KeyDown(Enter) or <code>btnSearch_Click</code> → <code>LoadMembersAsync(term)</code> → <code>MemberService.SearchMembersAsync</code> → <code>MemberRepository.SearchAsync</code> → SQL <code>LIKE</code> over four columns → <code>Bind(members)</code> repopulates the <code>DataGridView</code>. Empty term short-circuits to <code>GetAllAsync()</code>. Web equivalent: <code>GET /fitcore/3/members/search?term=juan</code>.</p>
+
+<h3>11.4 UPDATE</h3>
+<p>Selecting a grid row fires <code>gridMembers_SelectionChanged</code>, which stores <code>_selectedMemberId</code> and copies the row into the editable textboxes. <code>btnUpdate_Click</code> then: guards on <code>_selectedMemberId == -1</code> → reads the form → calls <code>UpdateMemberAsync(id, …)</code>. The service <strong>loads the entity first</strong>, mutates its properties, and calls <code>UpdateAsync</code>; EF's change tracker emits an <code>UPDATE</code> for the changed columns only. A <code>null</code> return means the row vanished between select and save, and the UI says "That member no longer exists — the list has been refreshed."</p>
+<p>Note the small safety rule: <code>Status = string.IsNullOrWhiteSpace(status) ? member.Status : status.Trim()</code> — an empty status never wipes the existing one.</p>
+
+<h3>11.5 DELETE — the guarded path</h3>
+<pre class="ascii">
+[Delete] → MessageBox confirm ("Only a member with no subscriptions, payments or sales…")
+   │ Yes
+   ▼ MemberService.DeleteMemberAsync(id)
+   ├─ GetByIdAsync(id)            → null?  ⇒ NotFound
+   ├─ GetHistoryCountsAsync(id)   → three COUNT queries (Subscriptions, Payments, Sales)
+   │     history.HasAny?          ⇒ HasHistory        ← refuse, do NOT touch the row
+   └─ DeleteAsync(id)             ⇒ Deleted           ← DELETE FROM Members WHERE MemberId = @p0
+   │
+   ▼ Form1 switch on MemberDeleteResult
+      Deleted    → "Member deleted."               + reload grid
+      HasHistory → GetMemberHistoryCountsAsync(id) + history.Describe()
+                   "This member has 2 subscriptions, 3 payments on record… set
+                    their status to Inactive and press Update instead."
+      NotFound   → "That member no longer exists."  + reload grid
+</pre>
+<p>The API expresses the identical decision as <code>204 / 409 / 404</code>. This is the "soft delete by status" pattern: history is preserved, the member simply stops counting as active.</p>
+
+<h3>11.6 The complex case — creating a sale</h3>
+<p>See §8.2. In demo terms: pick a member, add product lines, submit → a <code>Sale</code> + N <code>SaleItem</code>s + N <code>StockMovement</code> rows + N <code>Inventory</code> decrements, all in <strong>one transaction</strong>. Over-sell and the whole thing rolls back with a readable message.</p>
+
+<!-- ============================================================ -->
+<h2 id="di">12. Dependency injection &amp; lifetimes</h2>
+
+<p>Both hosts build the same object graph; only the container bootstrap differs.</p>
+
+<div class="grid2">
+<div class="card">
+<h5>WinForms — <code>Program.cs</code></h5>
+<pre style="font-size:.76rem">ApplicationConfiguration.Initialize();
+
+<span class="k">var</span> services = <span class="k">new</span> ServiceCollection();
+ConfigureServices(services);
+<span class="k">var</span> provider = services.BuildServiceProvider();
+
+AppContext.ServiceProvider = provider;
+<span class="k">var</span> shell = provider.GetRequiredService&lt;MainForm&gt;();
+Application.Run(shell);</pre>
+<p style="font-size:.85rem;margin:8px 0 0">Configuration is read from <code>AppContext.BaseDirectory</code> so the app behaves identically under <code>dotnet run</code> and from a publish folder.</p>
+</div>
+<div class="card">
+<h5>API — <code>Program.cs</code></h5>
+<pre style="font-size:.76rem"><span class="k">var</span> builder = WebApplication.CreateBuilder(args);
+builder.Services.AddDbContext&lt;TenantErpDbContext&gt;(…);
+builder.Services.AddScoped&lt;IMemberRepository,
+                           MemberRepository&gt;();
+builder.Services.AddScoped&lt;IMemberService,
+                           MemberService&gt;();
+<span class="k">var</span> app = builder.Build();</pre>
+<p style="font-size:.85rem;margin:8px 0 0">The host creates one DI scope per HTTP request automatically.</p>
+</div>
+</div>
+
+<h3>12.1 Registrations and why each lifetime</h3>
+<table>
+<tr><th>Registration</th><th>Lifetime</th><th>Reason</th></tr>
+<tr><td><code>IConfiguration</code></td><td>Singleton</td><td>Immutable settings.</td></tr>
+<tr><td><code>TenantErpDbContext</code></td><td>Scoped (default of <code>AddDbContext</code>)</td><td>DbContext is a unit of work and is <strong>not</strong> thread-safe. One per request / per module.</td></tr>
+<tr><td>All repositories &amp; services</td><td>Scoped</td><td>They hold the DbContext; their lifetime must match it.</td></tr>
+<tr><td><code>IGenericRepository&lt;&gt;</code></td><td>Scoped, <strong>open generic</strong></td><td><code>AddScoped(typeof(IGenericRepository&lt;&gt;), typeof(GenericRepository&lt;&gt;))</code> registers <em>every</em> closed type at once — <code>SubscriptionService</code> injects <code>IGenericRepository&lt;MembershipPlan&gt;</code> with no dedicated registration.</td></tr>
+<tr><td><code>MainForm</code></td><td>Singleton</td><td>The shell lives for the whole session.</td></tr>
+<tr><td>All 8 module forms</td><td>Scoped</td><td>Each navigation builds a fresh form in a fresh scope.</td></tr>
+</table>
+
+<h3>12.2 The clever bit — a DI scope per navigation</h3>
+<pre><span class="c">// Each module gets a dedicated DI scope so it works against its own DbContext and
+// always reads the current database state rather than cached tracked entities.</span>
+<span class="k">private void</span> Navigate&lt;TForm&gt;(<span class="k">string</span> moduleName) <span class="k">where</span> TForm : Form
+{
+    scope = _scopeFactory.CreateScope();
+    <span class="k">var</span> form = scope.ServiceProvider.GetRequiredService&lt;TForm&gt;();
+
+    ReleaseCurrentModule();          <span class="c">// dispose previous form AND its scope</span>
+
+    form.TopLevel = <span class="k">false</span>;
+    form.FormBorderStyle = FormBorderStyle.None;
+    form.Dock = DockStyle.Fill;
+    pnlContent.Controls.Add(form);
+    form.Show();
+
+    _currentForm = form; _currentScope = scope;
+}</pre>
+
+<div class="key">
+<strong>This solves a bug most student WinForms projects ship with.</strong> A desktop app has no request boundary, so a single long-lived DbContext accumulates tracked entities and starts serving stale data — you edit a member in one screen and another screen keeps showing the old values. Creating a scope per navigation gives every module a fresh DbContext, which is the desktop equivalent of a web request scope. It also embeds the module form inside the shell panel (<code>TopLevel = false</code> + <code>Dock = Fill</code>) instead of opening separate windows, which is why FitCore feels like one application rather than a pile of dialogs.
+</div>
+
+<!-- ============================================================ -->
+<h2 id="tenant">13. Multi-tenancy (Master vs Tenant DB)</h2>
+
+<p>FitCore is built for <strong>database-per-tenant</strong> multi-tenancy. <code>MasterErp</code> is a registry; each company's real data lives in its own <code>TenantErp</code>-shaped database.</p>
+
+<pre class="ascii">
+MasterErp                                   Tenant databases
+┌──────────────┐                        ┌──────────────────────┐
+│ Companies    │                        │ FitCore_GymA         │
+│  CompanyId 1 │──┐                     │  Members, Sales, …   │
+│  CompanyId 2 │  │  CompanyDatabases   └──────────────────────┘
+└──────────────┘  └──▶ ServerName       ┌──────────────────────┐
+┌──────────────┐       DatabaseName ───▶│ FitCore_GymB         │
+│ Devices      │       CredentialKey    │  Members, Sales, …   │
+└──────────────┘       IsActive         └──────────────────────┘
+
+Request with companyId
+   → ITenantDatabaseResolver.GetDatabaseInfoAsync(companyId)
+        reads MasterErp.CompanyDatabases WHERE CompanyId = @id AND IsActive
+        (throws "No active database configuration found for company {id}" if missing)
+   → ITenantDbContextFactory.CreateAsync(companyId)
+        builds a connection string from ServerName + DatabaseName + CredentialKey
+        returns a TenantErpDbContext pointed at THAT database
+   → normal repository/service code runs against it, unchanged
+</pre>
+
+<p>Live endpoints that exercise this path: <code>GET /test-tenant/{companyId}</code>, <code>GET /tenant/{companyId}/products</code>, <code>GET|POST /tenant/{companyId}/customers</code>, <code>GET|POST /tenant/{companyId}/suppliers</code>.</p>
+
+<div class="warn">
+<strong>State the current limitation before you're asked.</strong> The <code>/fitcore/3</code> module endpoints and the entire WinForms app use the single connection-string-configured <code>TenantErpDbContext</code>, not the resolver — the "3" in the route is a fixed company segment. The multi-tenant infrastructure is implemented and demonstrable on the <code>/tenant/{companyId}/*</code> routes, but the business modules have not yet been migrated onto it. Presenting that as "implemented and proven; wiring the modules through it is the next milestone" is accurate and far better than being caught claiming full multi-tenancy.
+</div>
+
+<p>Note also <code>CredentialKey</code>: the <code>CompanyDatabase</code> row stores a <em>key</em> that identifies a credential, not a password. Passwords are never persisted in the registry table. Good security talking point.</p>
+
+<!-- ============================================================ -->
+<h2 id="errors">14. Error handling strategy</h2>
+
+<p>The project distinguishes three failure classes, and this is a deliberate design worth a slide:</p>
+
+<table>
+<tr><th>Class</th><th>Type</th><th>Meaning</th><th>Desktop</th><th>API</th></tr>
+<tr><td>User can fix it by typing something else</td><td><code>ValidationException</code> (custom)</td><td>"First name is required."</td><td>Warning MessageBox</td><td>(surfaced as a message)</td></tr>
+<tr><td>Request is fine, state forbids it</td><td><code>MemberDeleteResult</code> / <code>PlanDeleteResult</code> enums</td><td>"Member has history"</td><td>Explanatory MessageBox with the remedy</td><td><code>409 Conflict</code> + message</td></tr>
+<tr><td>Operation is impossible</td><td><code>InvalidOperationException</code></td><td>"Not enough stock", "Plan not found"</td><td>Error MessageBox via <code>ShowError</code></td><td><code>400 Bad Request</code> + <code>{ "error": … }</code></td></tr>
+</table>
+
+<pre><span class="c">// ValidationException — a rule the user can fix by changing what they typed, as opposed
+// to a fault. The forms show these as a plain warning instead of an error dialog, and they
+// are distinct from the InvalidOperationException EF Core raises for data-access problems.</span>
+<span class="k">public class</span> ValidationException : Exception
+{
+    <span class="k">public</span> ValidationException(<span class="k">string</span> message) : <span class="k">base</span>(message) { }
+}</pre>
+
+<p>Notice too that <strong>returning an enum instead of throwing</strong> for the delete guards is intentional: "this member has history" is an expected outcome, not an exceptional one. Exceptions are for the unexpected. That's a nuanced point that plays very well with an experienced panel.</p>
+
+<!-- ============================================================ -->
+<h2 id="erd">15. Data model / ERD</h2>
+
+<pre class="ascii">
+                    ┌────────────────────┐
+                    │  MembershipPlan    │
+                    │  PK PlanId         │
+                    │  PlanName          │
+                    │  DurationMonths    │
+                    │  Price             │
+                    │  IsActive          │
+                    └─────────┬──────────┘
+                              │ 1
+                              │            RESTRICT
+                              │ *
+┌──────────────┐ 1      *  ┌──┴──────────────────┐ 1      * ┌────────────────┐
+│   Member     ├───────────┤   Subscription      ├──────────┤    Payment     │
+│ PK MemberId  │  CASCADE  │ PK SubscriptionId   │ NOACTION │ PK PaymentId   │
+│ FirstName    │           │ FK MemberId         │          │ FK MemberId    │
+│ LastName     │           │ FK PlanId           │          │ FK Subscript.? │
+│ Phone/Email  │           │ StartDate/EndDate   │          │ Amount, Method │
+│ JoinDate     │           │ Status              │          │ Status, Ref    │
+│ Status       │           └─────────────────────┘          └────────┬───────┘
+└──────┬───────┘                                                     │
+       │ 1                                                  CASCADE  │ *
+       │                     ┌──────────────────┐                    │
+       │ *        CASCADE    │                  │◄───────────────────┘
+┌──────┴───────┐ 1      *  ┌─┴──────────────┐ * │ 1  ┌──────────────┐
+│    Sale      ├───────────┤   SaleItem     ├────────┤   Product    │
+│ PK SaleId    │  CASCADE  │ PK SaleItemId  │RESTRICT│ PK ProductId │
+│ FK MemberId  │           │ FK SaleId      │        │ ProductCode  │
+│ SaleDate     │           │ FK ProductId   │        │ ProductName  │
+│ TotalAmount  │           │ Quantity       │        │ UnitPrice    │
+└──────────────┘           │ UnitPrice      │        │ IsActive     │
+                           └────────────────┘        └──────┬───────┘
+                                                    1 │     │ 1
+                                          CASCADE      │     │  CASCADE
+                                                    *  ▼     ▼  *
+                                       ┌──────────────┐   ┌──────────────────┐
+                                       │  Inventory   │   │  StockMovement   │
+                                       │ PK Inventory │   │ PK StockMovement │
+                                       │ FK ProductId │   │ FK ProductId     │
+                                       │ QuantityOnH. │   │ MovementType     │
+                                       │ ReorderLevel │   │ Quantity         │
+                                       │ LastUpdated  │   │ BalanceAfter     │
+                                       └──────────────┘   │ Reference/Notes  │
+                                                          └──────────────────┘
+       Standalone reference tables: Customer, Supplier
+</pre>
+
+<p>Cardinality in words, for the script: a <strong>Member</strong> has many <strong>Subscriptions</strong>, many <strong>Sales</strong> and many <strong>Payments</strong>. A <strong>MembershipPlan</strong> has many <strong>Subscriptions</strong>. A <strong>Subscription</strong> may have many <strong>Payments</strong> (partial payments are supported — hence the <em>Partial</em> payment status). A <strong>Sale</strong> has many <strong>SaleItems</strong>, each referencing one <strong>Product</strong>. Each <strong>Product</strong> has one <strong>Inventory</strong> row and many <strong>StockMovements</strong>.</p>
+
+<p>Two modelling decisions to be ready to defend:</p>
+<ul>
+  <li><strong><code>Payment.SubscriptionId</code> is nullable.</strong> A payment always belongs to a member, but not every payment settles a subscription (walk-in purchases, deposits). Nullable FK = optional relationship.</li>
+  <li><strong><code>SaleItem.UnitPrice</code> duplicates <code>Product.UnitPrice</code>.</strong> That is intentional, not redundancy: the line stores the price <em>at the time of sale</em>, so changing a product's price later never rewrites history. This is standard practice in real ERP systems.</li>
+</ul>
+
+<!-- ============================================================ -->
+<h2 id="endpoints">16. Endpoint reference table</h2>
+<p>All business endpoints sit under the base <code>/fitcore/3</code>.</p>
+
+<table>
+<tr><th>Verb</th><th>Route</th><th>Service call</th><th>Returns</th></tr>
+<tr><td class="method get">GET</td><td>/members</td><td>GetAllMembersAsync</td><td>MemberDto[]</td></tr>
+<tr><td class="method get">GET</td><td>/members/{id}</td><td>GetMemberByIdAsync</td><td>MemberDto / 404</td></tr>
+<tr><td class="method get">GET</td><td>/members/search?term=</td><td>SearchMembersAsync</td><td>MemberDto[]</td></tr>
+<tr><td class="method post">POST</td><td>/members</td><td>CreateMemberAsync</td><td>201 + MemberDto</td></tr>
+<tr><td class="method put">PUT</td><td>/members/{id}</td><td>UpdateMemberAsync</td><td>MemberDto / 404</td></tr>
+<tr><td class="method del">DELETE</td><td>/members/{id}</td><td>DeleteMemberAsync</td><td>204 / 409 / 404</td></tr>
+<tr><td class="method get">GET</td><td>/membership-overview</td><td>GetMembershipOverviewAsync</td><td>MembershipView[]</td></tr>
+<tr><td class="method get">GET</td><td>/membership-plans<br>/membership-plans/active<br>/membership-plans/{id}</td><td>GetAllPlansAsync / GetActivePlansAsync / GetPlanByIdAsync</td><td>Plans</td></tr>
+<tr><td class="method post">POST</td><td>/membership-plans</td><td>CreatePlanAsync</td><td>201</td></tr>
+<tr><td class="method put">PUT</td><td>/membership-plans/{id}</td><td>UpdatePlanAsync</td><td>200 / 404</td></tr>
+<tr><td class="method del">DELETE</td><td>/membership-plans/{id}</td><td>DeletePlanAsync</td><td>204 / 409 (in use) / 404</td></tr>
+<tr><td class="method get">GET</td><td>/subscriptions<br>/subscriptions/active<br>/subscriptions/{id}<br>/members/{memberId}/subscriptions</td><td>SubscriptionService reads</td><td>SubscriptionDto[]</td></tr>
+<tr><td class="method post">POST</td><td>/subscriptions</td><td>CreateSubscriptionAsync</td><td>201</td></tr>
+<tr><td class="method post">POST</td><td>/subscriptions/{id}/renew</td><td>RenewSubscriptionAsync</td><td>200 / 404</td></tr>
+<tr><td class="method post">POST</td><td>/subscriptions/{id}/cancel</td><td>CancelSubscriptionAsync</td><td>200 / 404</td></tr>
+<tr><td class="method post">POST</td><td>/subscriptions/expire-overdue</td><td>ExpireOverdueSubscriptionsAsync</td><td>{ expired: n }</td></tr>
+<tr><td class="method del">DELETE</td><td>/subscriptions/{id}</td><td>DeleteSubscriptionAsync</td><td>204 / 404</td></tr>
+<tr><td class="method get">GET</td><td>/payments<br>/payments/{id}<br>/members/{id}/payments<br>/subscriptions/{id}/payments</td><td>PaymentService reads</td><td>PaymentDto / PaymentView[]</td></tr>
+<tr><td class="method post">POST</td><td>/payments</td><td>RecordPaymentAsync</td><td>201 / 400</td></tr>
+<tr><td class="method put">PUT</td><td>/payments/{id}</td><td>UpdatePaymentAsync</td><td>200 / 400 / 404</td></tr>
+<tr><td class="method patch">PATCH</td><td>/payments/{id}/status</td><td>UpdatePaymentStatusAsync</td><td>200 / 400 / 404</td></tr>
+<tr><td class="method del">DELETE</td><td>/payments/{id}</td><td>DeletePaymentAsync</td><td>204 / 404</td></tr>
+<tr><td class="method get">GET</td><td>/sales<br>/sales/{id}<br>/sales/{id}/items<br>/members/{id}/sales</td><td>SaleService reads</td><td>SaleView[] / SaleDto</td></tr>
+<tr><td class="method post">POST</td><td>/sales</td><td>CreateSaleAsync</td><td>201 / 400 (stock)</td></tr>
+<tr><td class="method del">DELETE</td><td>/sales/{id}</td><td>DeleteSaleAsync (restores stock)</td><td>204 / 404</td></tr>
+<tr><td class="method get">GET</td><td>/products<br>/products/active<br>/products/{id}</td><td>ProductService reads</td><td>Products</td></tr>
+<tr><td class="method post">POST</td><td>/products</td><td>CreateProductAsync</td><td>201 / 400</td></tr>
+<tr><td class="method put">PUT</td><td>/products/{id}</td><td>UpdateProductAsync</td><td>200 / 400 / 404</td></tr>
+<tr><td class="method del">DELETE</td><td>/products/{id}</td><td>DeleteProductAsync</td><td>204 / 400 / 404</td></tr>
+<tr><td class="method get">GET</td><td>/inventory<br>/inventory/{productId}<br>/inventory/movements?productId=&amp;take=</td><td>InventoryService reads</td><td>InventoryView[] / movements</td></tr>
+<tr><td class="method post">POST</td><td>/inventory/{productId}/stock-in</td><td>StockInAsync</td><td>200 / 400</td></tr>
+<tr><td class="method post">POST</td><td>/inventory/{productId}/stock-out</td><td>StockOutAsync</td><td>200 / 400</td></tr>
+<tr><td class="method post">POST</td><td>/inventory/{productId}/adjust</td><td>AdjustAsync</td><td>200 / 400</td></tr>
+<tr><td class="method put">PUT</td><td>/inventory/{productId}/reorder-level</td><td>SetReorderLevelAsync</td><td>200 / 400</td></tr>
+<tr><td class="method get">GET</td><td>/dashboard</td><td>GetSummaryAsync</td><td>DashboardSummary (18 KPIs)</td></tr>
+</table>
+<p style="font-size:.85rem;color:var(--muted)">Plus the multi-tenant routes outside the <code>/fitcore/3</code> base: <code>POST /companies</code>, <code>POST /devices</code>, <code>POST /company-databases</code>, <code>GET /test-tenant/{companyId}</code>, <code>GET /tenant/{companyId}/products</code>, <code>GET|POST /tenant/{companyId}/customers</code>, <code>GET|POST /tenant/{companyId}/suppliers</code>.</p>
+
+<!-- ============================================================ -->
+<h2 id="run">17. How to build, run and demo</h2>
+
+<h4>Prerequisites</h4>
+<ul><li>.NET SDK 10</li><li>SQL Server Express running as <code>.\SQLEXPRESS</code> (Windows Authentication)</li><li><code>dotnet tool install -g dotnet-ef</code></li></ul>
+
+<pre><span class="c"># 1. Build everything</span>
+cd C:\Users\USER\source\repos\ERP_Project1
+dotnet build
+
+<span class="c"># 2. Create/update the databases (two contexts ⇒ two commands)</span>
+cd ERP_infrastructure
+dotnet ef database update --context TenantErpDbContext
+dotnet ef database update --context MasterErpDbContext
+
+<span class="c"># 3. Run the desktop app</span>
+cd ..\ERP_Project1 &amp;&amp; dotnet run
+
+<span class="c"># 4. Run the API (separate terminal)</span>
+cd ..\ERP_api &amp;&amp; dotnet run
+<span class="c">#    https://localhost:7000  •  OpenAPI doc: https://localhost:7000/openapi/v1.json</span></pre>
+
+<h4>A 6-minute demo script that shows the architecture, not just the buttons</h4>
+<ol>
+  <li><strong>Dashboard</strong> (30s) — 18 live KPIs. Mention that it expires overdue subscriptions before counting.</li>
+  <li><strong>Membership → add a member</strong> (45s) — then say the one line: "that Add button called <code>MemberService.CreateMemberAsync</code>, which is the exact method the REST API calls."</li>
+  <li><strong>Search</strong> (20s) — note the filtering happens in SQL, not in the grid.</li>
+  <li><strong>Delete a member who has history</strong> (60s) — <em>the money shot</em>. Show the refusal message, then set the status to Inactive and Update instead. Explain the cascade → guard → UI chain.</li>
+  <li><strong>Sales → over-sell a product</strong> (60s) — show the stock error, then show the Sales grid still has no orphan row: the transaction rolled back.</li>
+  <li><strong>Inventory → movements</strong> (40s) — point at <code>SALE-n</code> references and <code>BalanceAfter</code>: a full audit trail.</li>
+  <li><strong>Swap to the browser</strong> (60s) — hit <code>GET /fitcore/3/members</code> and show the same member you just created, now as a <code>MemberDto</code> over HTTP. Then <code>DELETE</code> the same member with history and show the <code>409 Conflict</code>. <strong>Same rule, two channels.</strong></li>
+  <li><strong>Close</strong> (25s) — one slide: the layer diagram, and "the bottom three layers were written once."</li>
+</ol>
+
+<!-- ============================================================ -->
+<h2 id="slides">18. Suggested presentation outline</h2>
+
+<table>
+<tr><th>#</th><th>Slide</th><th>Content</th><th>Time</th></tr>
+<tr><td>1</td><td>Title</td><td>FitCore ERP — Fitness Facility Management System. Team, date.</td><td>10s</td></tr>
+<tr><td>2</td><td>Problem &amp; scope</td><td>Gyms track members, plans, subscriptions, payments, retail stock — usually in disconnected spreadsheets. Five integrated modules.</td><td>45s</td></tr>
+<tr><td>3</td><td>Tech stack</td><td>.NET 10, C# 12, EF Core 10, SQL Server, WinForms + ASP.NET Core Minimal APIs + Blazor WASM.</td><td>30s</td></tr>
+<tr><td>4</td><td><strong>Solution structure</strong></td><td>The 5-project diagram with arrows pointing inward. Say the Dependency Rule.</td><td>60s</td></tr>
+<tr><td>5</td><td><strong>Layered architecture</strong></td><td>The big block diagram from §3. One sentence per layer.</td><td>90s</td></tr>
+<tr><td>6</td><td><strong>Where MVC fits</strong></td><td>The mapping table from §4.1 + the delete-guard "one Model, two Controllers" code comparison.</td><td>90s</td></tr>
+<tr><td>7</td><td>Domain model / ERD</td><td>The ERD, cardinalities, and the two defended decisions (nullable SubscriptionId, historical UnitPrice).</td><td>75s</td></tr>
+<tr><td>8</td><td>EF Core &amp; migrations</td><td>Code-first, Fluent API, 9 tenant migrations, cascade vs restrict vs NoAction.</td><td>60s</td></tr>
+<tr><td>9</td><td>Repository pattern</td><td><code>GenericRepository&lt;T&gt;</code> + the six specific repositories. Why generics.</td><td>60s</td></tr>
+<tr><td>10</td><td>Service layer</td><td>The 8 services; spotlight the derived membership status.</td><td>60s</td></tr>
+<tr><td>11</td><td><strong>DTOs</strong></td><td>Definition, the four reasons, the Create/Update/Read split, <code>ApiMappings.ToDto()</code>.</td><td>75s</td></tr>
+<tr><td>12</td><td><strong>Controllers / API</strong></td><td>Anatomy of one endpoint (the 5 numbered things), status-code table.</td><td>75s</td></tr>
+<tr><td>13</td><td><strong>CRUD end-to-end</strong></td><td>The two side-by-side trace diagrams from §11.1–11.2. Your strongest slide.</td><td>90s</td></tr>
+<tr><td>14</td><td>Transactions</td><td>CreateSaleAsync: merge → validate → transaction → stock ledger → commit/rollback.</td><td>60s</td></tr>
+<tr><td>15</td><td>Dependency injection</td><td>Lifetimes table + the scope-per-navigation trick and the stale-data bug it prevents.</td><td>60s</td></tr>
+<tr><td>16</td><td>Multi-tenancy</td><td>Master/Tenant diagram, the resolver, and the honest current limitation.</td><td>50s</td></tr>
+<tr><td>17</td><td><strong>Live demo</strong></td><td>The 6-minute script from §17.</td><td>6 min</td></tr>
+<tr><td>18</td><td>Known gaps &amp; roadmap</td><td>No auth, no tests, <code>Program.cs</code> length, deprecated <code>WithOpenApi()</code>, wire modules through the tenant resolver, audit logging, reports.</td><td>45s</td></tr>
+<tr><td>19</td><td>Close</td><td>"Three front ends, one business core, written once."</td><td>20s</td></tr>
+</table>
+
+<!-- ============================================================ -->
+<h2 id="qa">19. Likely panel questions &amp; answers</h2>
+
+<div class="qa"><p class="q">Is this MVC?</p><p class="a">Not the ASP.NET MVC template — there are no server-rendered Views. It's a layered/Clean architecture where each front end applies an MVC-family pattern: WinForms fuses View and Controller in the Form class with the Model fully extracted; the API's minimal-API delegates are controller actions with JSON as the view; Blazor uses MVVM. The value is that all three drive the <em>same</em> Model.</p></div>
+
+<div class="qa"><p class="q">Where are your controllers?</p><p class="a">In <code>ERP_api/Program.cs</code>, as minimal-API endpoint delegates — same routing, DI and model binding as controller actions, less ceremony. <code>WeatherForecastController</code> is the scaffolded template, not part of the system. At 50 endpoints and 704 lines, the refactor I'd do next is grouping them into <code>MapMemberEndpoints</code>-style extension methods.</p></div>
+
+<div class="qa"><p class="q">Why DTOs instead of returning entities?</p><p class="a">Four reasons: entities have bidirectional navigation properties so serialising one drags the whole object graph (and can cycle); DTOs prevent over-posting by exposing only the writable fields; they keep the API contract stable when the schema changes; and they cut payload size. Concretely, <code>CreateMemberDto</code> has four fields, so a client cannot set <code>MemberId</code>, <code>JoinDate</code> or <code>CreatedAt</code>.</p></div>
+
+<div class="qa"><p class="q">What's the difference between a DTO, an entity and a view model? You seem to have all three.</p><p class="a">Deliberately. An entity is shaped by the database; a view model (<code>MembershipView</code>, <code>SaleView</code>, <code>DashboardSummary</code>) is shaped by a screen and holds computed values; a DTO is shaped by the wire. Three audiences, three shapes — collapsing them would couple the database schema to both the UI and the public API.</p></div>
+
+<div class="qa"><p class="q">Why a repository layer when EF Core's DbSet is already one?</p><p class="a">It's a genuine trade-off. Here it earns its keep: services depend on interfaces so they're unit-testable without a database; query shapes like the three-table history count are written once; and both front ends provably reuse them. The cost is an extra indirection, which we accepted knowingly.</p></div>
+
+<div class="qa"><p class="q">How do you prevent a member's payment history from being destroyed?</p><p class="a">Three layers. The schema cascades member→payments, so the database <em>would</em> delete them. <code>MemberRepository.GetHistoryCountsAsync</code> counts subscriptions, payments and sales; <code>MemberService.DeleteMemberAsync</code> returns <code>HasHistory</code> and refuses; and both UIs tell the user to set the status to Inactive. A constraint drove a rule which drove a message.</p></div>
+
+<div class="qa"><p class="q">What happens if a sale fails halfway through?</p><p class="a"><code>CreateSaleAsync</code> wraps everything in <code>BeginTransactionAsync</code>. If any line lacks stock, <code>DeductStockAsync</code> throws, we <code>RollbackAsync</code>, and neither the sale, its items, the inventory decrements nor the stock movements are persisted. I can demonstrate it by over-selling.</p></div>
+
+<div class="qa"><p class="q">Why is <code>Payment → Subscription</code> NoAction when every other FK cascades?</p><p class="a">SQL Server rejects multiple cascade paths into the same table. Member→Subscription→Payment and Member→Payment are two such paths, so one leg must be broken; we kept the cascade on the member side, since payment history belongs to the member.</p></div>
+
+<div class="qa"><p class="q">Is membership status stored or computed?</p><p class="a">Computed, in <code>GetMembershipOverviewAsync</code>, from the subscription with the furthest end date: Cancelled, else Expired if days remaining &lt; 0, else Expiring Soon within 14 days, else Active. A stored column goes stale the instant a date passes. <code>ExpireOverdueSubscriptionsAsync</code> exists separately to keep the persisted column in sync for reporting.</p></div>
+
+<div class="qa"><p class="q">Is your application thread-safe / how do you handle concurrency?</p><p class="a">DbContext isn't thread-safe, which is why it's registered Scoped: one per HTTP request on the web, and one per module navigation on the desktop via <code>IServiceScopeFactory.CreateScope()</code>. In the UI, the <code>_isBusy</code> flag prevents double-submits. We do <em>not</em> yet have optimistic concurrency tokens — a rowversion column on Member and Subscription is the next step if two operators might edit simultaneously.</p></div>
+
+<div class="qa"><p class="q">What about security?</p><p class="a">Connection strings use Windows Authentication, so no passwords are embedded; the tenant registry stores a <code>CredentialKey</code>, not a password; DTOs block over-posting; and EF Core parameterises every query, so there's no SQL injection surface. The honest gap: the API has <code>UseAuthorization()</code> in the pipeline but no authentication configured and a permissive <code>AllowAll</code> CORS policy — both are development settings that must be closed before deployment. JWT plus role-based authorization is the planned next milestone.</p></div>
+
+<div class="qa"><p class="q">How would you add a new module, say Trainers?</p><p class="a">Seven steps, following the existing pattern: entity in <code>ERP_domain</code>; <code>DbSet</code> + a <code>ConfigureTrainers</code> method in <code>TenantErpDbContext</code>; <code>ITrainerRepository</code>/<code>TrainerRepository</code> inheriting <code>GenericRepository&lt;Trainer&gt;</code>; <code>ITrainerService</code>/<code>TrainerService</code>; register both in the two <code>Program.cs</code> files; <code>dotnet ef migrations add AddTrainers</code> and update; then add the form and the endpoints. The business logic is written once and both UIs can use it.</p></div>
+
+<div class="qa"><p class="q">What would you improve given more time?</p><p class="a">In priority order: authentication and role-based authorization; a unit-test project (the interface-based design makes the services mockable today, we just haven't written the tests); split <code>Program.cs</code> into endpoint extension methods; route the business modules through <code>ITenantDbContextFactory</code> so multi-tenancy is end-to-end; add optimistic concurrency tokens; add server-side paging on the grids; and replace the deprecated <code>.WithOpenApi()</code> calls.</p></div>
+
+<div class="qa"><p class="q">Why two DbContexts?</p><p class="a">They serve different lifecycles and databases. <code>MasterErp</code> is the tenant registry (Companies, CompanyDatabases, Devices) and changes rarely; <code>TenantErp</code> holds one company's business data. Each has its own migration history — which is why every <code>dotnet ef</code> command must pass <code>--context</code>, and why both projects implement <code>IDesignTimeDbContextFactory</code>.</p></div>
+
+<div class="qa"><p class="q">Why is your desktop app async everywhere? It's single-user.</p><p class="a">Because the UI thread must never block on I/O — a synchronous database call freezes the window. Every handler is <code>async</code>, awaits the service, and the <code>_isBusy</code> flag plus <code>SetBusy()</code> disables the controls while work is in flight. It also means the same service methods are directly reusable by the API, which genuinely needs async for throughput.</p></div>
+
+<!-- ============================================================ -->
+<h2 id="glossary">20. Glossary</h2>
+
+<table>
+<tr><th>Term</th><th>Meaning in this project</th></tr>
+<tr><td><strong>POCO</strong></td><td>Plain Old CLR Object — an entity with no framework attributes or base class. All of <code>ERP_domain</code>.</td></tr>
+<tr><td><strong>DTO</strong></td><td>Data Transfer Object — flat class for crossing the HTTP boundary. <code>ERP_api/DTOs/</code>.</td></tr>
+<tr><td><strong>View model / read model</strong></td><td>A class shaped for one screen, with joins and computations already done. <code>MembershipView</code>, <code>DashboardSummary</code>.</td></tr>
+<tr><td><strong>Repository</strong></td><td>An object that encapsulates data-access queries behind a collection-like interface.</td></tr>
+<tr><td><strong>Unit of Work</strong></td><td>The role played by <code>DbContext</code>: it tracks changes and commits them together in one <code>SaveChangesAsync</code>.</td></tr>
+<tr><td><strong>Navigation property</strong></td><td>A property that points to a related entity (<code>Member.Subscriptions</code>). Loaded eagerly with <code>Include()</code>.</td></tr>
+<tr><td><strong>Eager loading</strong></td><td><code>Include</code>/<code>ThenInclude</code> — fetch related data in the same query, avoiding the N+1 problem.</td></tr>
+<tr><td><strong>Code-first</strong></td><td>The C# classes are the source of truth; migrations generate the SQL schema from them.</td></tr>
+<tr><td><strong>Migration</strong></td><td>A versioned, ordered schema change (<code>Up</code>/<code>Down</code>) generated by <code>dotnet ef migrations add</code>.</td></tr>
+<tr><td><strong>Fluent API</strong></td><td>Configuring the model in <code>OnModelCreating</code> with method chains instead of attributes.</td></tr>
+<tr><td><strong>Dependency Injection</strong></td><td>Classes declare what they need via constructor parameters; the container supplies implementations.</td></tr>
+<tr><td><strong>Scoped lifetime</strong></td><td>One instance per logical operation — per HTTP request, or per module navigation on the desktop.</td></tr>
+<tr><td><strong>Open generic registration</strong></td><td><code>AddScoped(typeof(IGenericRepository&lt;&gt;), typeof(GenericRepository&lt;&gt;))</code> — registers all closed types at once.</td></tr>
+<tr><td><strong>Minimal API</strong></td><td>ASP.NET Core endpoints declared as <code>app.MapGet(route, delegate)</code> rather than controller classes.</td></tr>
+<tr><td><strong>Multi-tenancy (DB-per-tenant)</strong></td><td>Each company gets its own database; a master registry resolves which one to connect to.</td></tr>
+<tr><td><strong>Soft delete</strong></td><td>Marking a record Inactive instead of removing it, preserving history. How FitCore retires members and plans.</td></tr>
+<tr><td><strong>ACID transaction</strong></td><td>All-or-nothing database work. Used in <code>CreateSaleAsync</code> and <code>DeleteSaleAsync</code>.</td></tr>
+</table>
+
+<footer>
+  <strong>FitCore ERP — Architecture &amp; Presentation Study Guide.</strong>
+  Compiled from the live source tree at <code>C:\Users\USER\source\repos\ERP_Project1</code> on 2026-09-16.
+  Open this file in any browser; use <em>Ctrl+P → Save as PDF</em> to produce a printable handout.
+</footer>
+
+</div>
+</body>
+</html>

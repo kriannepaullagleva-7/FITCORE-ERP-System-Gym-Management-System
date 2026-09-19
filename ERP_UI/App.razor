@@ -1,0 +1,42 @@
+@*
+    Application root.
+
+    The session is restored once, here, before anything is routed. Until that has happened
+    the router is not rendered at all: routing first would flash the dashboard, then bounce a
+    signed-in user to the sign-in page for the instant before their token came back from
+    local storage.
+*@
+
+@inject AuthApiService Auth
+
+<CascadingAuthenticationState>
+    @if (!ready)
+    {
+        <div class="fc-boot">
+            <div class="fc-boot-mark">FC</div>
+            <div class="fc-spinner"></div>
+            <div class="fc-boot-text">Starting FitCore ERP&hellip;</div>
+        </div>
+    }
+    else
+    {
+        <Router AppAssembly="@typeof(App).Assembly" NotFoundPage="typeof(Pages.NotFound)">
+            <Found Context="routeData">
+                <RouteGuard RouteData="@routeData" />
+                <FocusOnNavigate RouteData="@routeData" Selector="h1" />
+            </Found>
+        </Router>
+    }
+</CascadingAuthenticationState>
+
+@code {
+    private bool ready;
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Offers whatever token is in storage to the API. A token that has expired, or that
+        // belongs to an account since deactivated, is rejected and the session cleared.
+        await Auth.RestoreSessionAsync();
+        ready = true;
+    }
+}

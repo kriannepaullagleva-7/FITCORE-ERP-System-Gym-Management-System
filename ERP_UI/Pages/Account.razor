@@ -1,0 +1,186 @@
+@page "/fitcore/account"
+@inject AuthApiService Auth
+@inject ToastService Toasts
+
+@*
+    The signed-in user's own profile, and the one place they can change their own password.
+
+    Everything shown here comes from the account the server authenticated, not from anything
+    the browser decided. The module list is read-only on purpose: what you may reach is an
+    administrator's decision, made on the User Access screen.
+*@
+
+<PageTitle>My Profile - FitCore ERP</PageTitle>
+
+<PageHeader Title="My Profile" Description="Your FitCore account and what it can reach." Crumbs="crumbs" />
+
+@if (user is null)
+{
+    <LoadingState Message="Loading your profile…" />
+}
+else
+{
+    <div class="fc-split-2">
+        <div class="fc-card">
+            <div class="fc-card-head">
+                <div>
+                    <h3 class="fc-card-title">Account</h3>
+                    <p class="fc-card-sub">Who you are signed in as.</p>
+                </div>
+            </div>
+            <div class="fc-card-body">
+                <div class="fc-profile">
+                    <span class="fc-avatar is-lg">@user.Initials</span>
+                    <div>
+                        <div class="fc-profile-name">@user.FullName</div>
+                        <div class="fc-muted">@user.RoleDisplayName</div>
+                    </div>
+                </div>
+
+                <dl class="fc-detail">
+                    <dt>Username</dt><dd>@user.Username</dd>
+                    <dt>Email</dt><dd>@(string.IsNullOrWhiteSpace(user.Email) ? "-" : user.Email)</dd>
+                    <dt>Role</dt><dd>@user.RoleDisplayName</dd>
+                    <dt>Company</dt><dd>@user.CompanyName</dd>
+                    <dt>Enterprise plan</dt>
+                    <dd><span class="fc-badge tone-blue no-dot">@user.EnterpriseTier</span></dd>
+                    <dt>Linked employee</dt>
+                    <dd>@(user.EmployeeId.HasValue ? $"Employee #{user.EmployeeId}" : "Not linked")</dd>
+                </dl>
+            </div>
+        </div>
+
+        <div class="fc-card">
+            <div class="fc-card-head">
+                <div>
+                    <h3 class="fc-card-title">Change password</h3>
+                    <p class="fc-card-sub">At least 8 characters.</p>
+                </div>
+            </div>
+            <div class="fc-card-body">
+                @if (user.MustChangePassword)
+                {
+                    <Alert Kind="warning"
+                           Message="You are still using a password that was set for you. Please choose your own." />
+                }
+
+                <Alert Message="@error" Kind="error" OnDismiss="() => error = null" />
+
+                <div class="fc-field">
+                    <label for="pw-current">Current password <span class="fc-req">*</span></label>
+                    <input id="pw-current" class="fc-input" type="password" @bind="currentPassword"
+                           autocomplete="current-password" disabled="@saving" />
+                </div>
+
+                <div class="fc-field">
+                    <label for="pw-new">New password <span class="fc-req">*</span></label>
+                    <input id="pw-new" class="fc-input" type="password" @bind="newPassword"
+                           autocomplete="new-password" disabled="@saving" />
+                </div>
+
+                <div class="fc-field">
+                    <label for="pw-confirm">Confirm new password <span class="fc-req">*</span></label>
+                    <input id="pw-confirm" class="fc-input" type="password" @bind="confirmPassword"
+                           autocomplete="new-password" disabled="@saving" />
+                </div>
+
+                <button class="fc-btn fc-btn-primary" @onclick="ChangePasswordAsync" disabled="@saving">
+                    @if (saving)
+                    {
+                        <span class="fc-spinner is-sm"></span><span>Saving&hellip;</span>
+                    }
+                    else
+                    {
+                        <Icon Name="key" Size="15" />
+                        <span>Change password</span>
+                    }
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <div class="fc-card">
+        <div class="fc-card-head">
+            <div>
+                <h3 class="fc-card-title">Your module access</h3>
+                <p class="fc-card-sub">
+                    Set by your administrator on the User Access screen, and enforced by the
+                    server on every request.
+                </p>
+            </div>
+        </div>
+        <div class="fc-card-body">
+            <div class="fc-modlist">
+                @foreach (var group in NavigationCatalogue.Groups)
+                {
+                    @foreach (var entry in group.Entries.DistinctBy(e => e.Module))
+                    {
+                        <span class="fc-chip @(user.Can(entry.Module) ? "is-on" : "is-off")">
+                            <Icon Name="@(user.Can(entry.Module) ? "check" : "x")" Size="12" />
+                            @entry.Module
+                        </span>
+                    }
+                }
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private readonly List<PageHeader.Crumb> crumbs = new() { new("My Profile") };
+
+    private CurrentUserDto? user => Auth.CurrentUser;
+
+    private string currentPassword = "";
+    private string newPassword = "";
+    private string confirmPassword = "";
+    private bool saving;
+    private string? error;
+
+    private async Task ChangePasswordAsync()
+    {
+        if (saving) return;
+
+        error = null;
+
+        // Checked here as well as on the server, so the obvious mistakes are caught without a
+        // round trip. The server still enforces both rules on its own.
+        if (string.IsNullOrWhiteSpace(currentPassword))
+        {
+            error = "Enter your current password.";
+            return;
+        }
+
+        if (newPassword.Trim().Length < 8)
+        {
+            error = "Your new password must be at least 8 characters long.";
+            return;
+        }
+
+        if (newPassword != confirmPassword)
+        {
+            error = "The two new passwords do not match.";
+            return;
+        }
+
+        saving = true;
+
+        try
+        {
+            var result = await Auth.ChangePasswordAsync(currentPassword, newPassword);
+
+            if (!result.IsSuccess)
+            {
+                error = result.ErrorMessage ?? "The password could not be changed.";
+                return;
+            }
+
+            currentPassword = newPassword = confirmPassword = "";
+            Toasts.Success("Your password has been changed.");
+        }
+        finally
+        {
+            saving = false;
+        }
+    }
+}

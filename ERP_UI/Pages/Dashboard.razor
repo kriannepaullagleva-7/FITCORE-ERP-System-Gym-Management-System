@@ -1,0 +1,406 @@
+@page "/fitcore/dashboard"
+@inject ReportsApiService ReportsApi
+@inject AuthApiService Auth
+
+@*
+    The executive dashboard.
+
+    Nothing on this page is hard-coded. Every tile, every chart point and every line of the
+    activity feed comes from api/reports/dashboard, which aggregates the tenant's own
+    database on each request.
+
+    Each block is gated on the module it belongs to, so the page adapts to the role: a
+    receptionist sees membership, sales, payments and stock, while employees and payroll only
+    appear for somebody who holds those modules.
+*@
+
+<PageTitle>Dashboard - FitCore ERP</PageTitle>
+
+<PageHeader Title="Dashboard"
+            Description="Live figures from your tenant database, refreshed on every visit.">
+    <Actions>
+        @if (summary is not null)
+        {
+            <span class="fc-chip">
+                <Icon Name="refresh" Size="13" />
+                Updated @summary.GeneratedAtUtc.ToLocalTime().ToString("HH:mm")
+            </span>
+        }
+        <button class="fc-btn fc-btn-secondary" @onclick="ReloadAsync" disabled="@isLoading">
+            @if (isLoading)
+            {
+                <span class="fc-spinner is-sm"></span>
+            }
+            else
+            {
+                <Icon Name="refresh" Size="15" />
+            }
+            Refresh
+        </button>
+        @if (Auth.Can(Modules.Sales))
+        {
+            <a class="fc-btn fc-btn-primary" href="fitcore/pos">
+                <Icon Name="plus" Size="15" /> New sale
+            </a>
+        }
+    </Actions>
+</PageHeader>
+
+<Alert Message="@errorMessage" Kind="error" />
+
+@if (isLoading && summary is null)
+{
+    <div class="fc-card"><LoadingState Message="Reading your database…" /></div>
+}
+else if (summary is not null)
+{
+    <!-- ------------------------------------------------------------------ Membership -->
+    @if (Auth.Can(Modules.Membership))
+    {
+    <h3 class="fc-card-title fc-mb">Membership</h3>
+    <div class="fc-kpi-grid">
+        <StatCard Label="Total members" Value="@summary.TotalMembers.ToString("N0")"
+                  Hint="@($"{summary.InactiveMembers:N0} inactive")" Icon="members" Tone="blue" />
+        <StatCard Label="Active members" Value="@summary.ActiveMembers.ToString("N0")"
+                  Hint="@($"{summary.ActiveSubscriptions:N0} active subscriptions")" Icon="check" Tone="green" />
+        <StatCard Label="Expiring soon" Value="@summary.ExpiringSoon.ToString("N0")"
+                  Hint="Within the next 14 days" Icon="alert" Tone="amber" />
+        <StatCard Label="Expired" Value="@summary.ExpiredSubscriptions.ToString("N0")"
+                  Hint="Memberships past their end date" Icon="ban" Tone="red" />
+        <StatCard Label="New this month" Value="@summary.NewMembersThisMonth.ToString("N0")"
+                  Hint="Members who joined since the 1st" Icon="trend-up" Tone="blue" />
+    </div>
+    }
+
+    <!-- ------------------------------------------------------------------ Sales -->
+    @if (Auth.Can(Modules.Sales))
+    {
+    <h3 class="fc-card-title fc-mb">Sales</h3>
+    <div class="fc-kpi-grid">
+        <StatCard Label="Today's sales" Value="@Money(summary.SalesToday)"
+                  Hint="@($"{summary.TransactionsToday:N0} transaction(s) today")" Icon="sales" Tone="green" />
+        <StatCard Label="This month" Value="@Money(summary.SalesThisMonth)"
+                  Hint="@($"{summary.TransactionsThisMonth:N0} transaction(s) this month")" Icon="calendar" Tone="blue" />
+        <StatCard Label="Transactions" Value="@summary.SalesCount.ToString("N0")"
+                  Hint="@($"{Money(summary.SalesTotal)} all time")" Icon="reports" Tone="slate" />
+        <StatCard Label="Average sale" Value="@Money(AverageSale)"
+                  Hint="Net of discounts, all time" Icon="money" Tone="blue" />
+    </div>
+    }
+
+    <!-- ------------------------------------------------------------------ Payments -->
+    @if (Auth.Can(Modules.Payments))
+    {
+    <h3 class="fc-card-title fc-mb">Payments</h3>
+    <div class="fc-kpi-grid">
+        <StatCard Label="Total collected" Value="@Money(summary.PaymentsTotal)"
+                  Hint="@($"{Money(summary.PaymentsToday)} today")" Icon="payment" Tone="green" />
+        <StatCard Label="Collected this month" Value="@Money(summary.PaymentsThisMonth)"
+                  Hint="@($"{summary.PaymentsCount:N0} payment(s) recorded")" Icon="money" Tone="blue" />
+        <StatCard Label="Outstanding balance" Value="@Money(summary.OutstandingBalance)"
+                  Hint="Owed across sales and memberships" Icon="alert"
+                  Tone="@(summary.OutstandingBalance > 0 ? "amber" : "green")" />
+        <StatCard Label="Partially paid" Value="@summary.PartiallyPaidSales.ToString("N0")"
+                  Hint="@($"{summary.UnpaidSales:N0} sale(s) not paid at all")" Icon="card" Tone="amber" />
+        <StatCard Label="Pending" Value="@summary.PendingPayments.ToString("N0")"
+                  Hint="Payments awaiting clearance" Icon="info" Tone="slate" />
+    </div>
+    }
+
+    <!-- ------------------------------------------------------------------ Inventory -->
+    @if (Auth.Can(Modules.Inventory))
+    {
+    <h3 class="fc-card-title fc-mb">Inventory</h3>
+    <div class="fc-kpi-grid">
+        <StatCard Label="Total products" Value="@summary.TotalProducts.ToString("N0")"
+                  Hint="@($"{Money(summary.InventoryValue)} stock value")" Icon="product" Tone="blue" />
+        <StatCard Label="Low stock" Value="@summary.LowStockProducts.ToString("N0")"
+                  Hint="At or below reorder level" Icon="box"
+                  Tone="@(summary.LowStockProducts > 0 ? "amber" : "green")" />
+        <StatCard Label="Out of stock" Value="@summary.OutOfStockProducts.ToString("N0")"
+                  Hint="Nothing left on the shelf" Icon="ban"
+                  Tone="@(summary.OutOfStockProducts > 0 ? "red" : "green")" />
+        @if (ShowWorkforce)
+        {
+            @* Derived from payroll and expenses, so it belongs to whoever may see those
+               figures rather than to whoever may see the stock levels it sits beside. *@
+            <StatCard Label="Net this month" Value="@Money(summary.NetThisMonth)"
+                      Hint="Collected less expenses and payroll" Icon="trend-up"
+                      Tone="@(summary.NetThisMonth >= 0 ? "green" : "red")" />
+        }
+    </div>
+    }
+
+    <!-- ------------------------------------------------------------------ Charts -->
+    @if (Auth.Can(Modules.Sales) || Auth.Can(Modules.Membership))
+    {
+    <div class="fc-split fc-mb">
+        @if (Auth.Can(Modules.Sales))
+        {
+        <div class="fc-card">
+            <div class="fc-card-head">
+                <div>
+                    <h3 class="fc-card-title">Sales overview</h3>
+                    <p class="fc-card-sub">@(trendMode == TrendMode.Daily ? "Revenue per day, last 14 days" : "Revenue per month, last 6 months")</p>
+                </div>
+                <div class="fc-row">
+                    <button class="fc-tab @(trendMode == TrendMode.Daily ? "active" : "")"
+                            @onclick="() => trendMode = TrendMode.Daily">Daily</button>
+                    <button class="fc-tab @(trendMode == TrendMode.Monthly ? "active" : "")"
+                            @onclick="() => trendMode = TrendMode.Monthly">Monthly</button>
+                </div>
+            </div>
+            <div class="fc-card-body">
+                @if (trendMode == TrendMode.Daily)
+                {
+                    <LineChart Points="summary.SalesTrend" Title="Daily sales"
+                               EmptyMessage="No sales have been recorded in the last fortnight." />
+                }
+                else
+                {
+                    <BarChart Points="summary.SalesByMonth" Title="Monthly sales"
+                              EmptyMessage="No sales have been recorded in the last six months." />
+                }
+            </div>
+        </div>
+        }
+
+        @if (Auth.Can(Modules.Membership))
+        {
+        <div class="fc-card">
+            <div class="fc-card-head">
+                <div>
+                    <h3 class="fc-card-title">Membership overview</h3>
+                    <p class="fc-card-sub">Where every member currently stands</p>
+                </div>
+            </div>
+            <div class="fc-card-body">
+                <DonutChart Slices="summary.MembershipBreakdown" ShowCounts="true"
+                            CentreLabel="memberships" Title="Membership status"
+                            EmptyMessage="No memberships have been created yet." />
+            </div>
+        </div>
+        }
+    </div>
+    }
+
+    @if (Auth.Can(Modules.Payments))
+    {
+    <div class="fc-split fc-mb">
+        <div class="fc-card">
+            <div class="fc-card-head">
+                <div>
+                    <h3 class="fc-card-title">Payments collected</h3>
+                    <p class="fc-card-sub">Settled payments per day, last 14 days</p>
+                </div>
+                <a class="fc-btn fc-btn-ghost fc-btn-sm" href="fitcore/payments">
+                    View payments <Icon Name="chevron-right" Size="14" />
+                </a>
+            </div>
+            <div class="fc-card-body">
+                <LineChart Points="summary.PaymentTrend" Title="Daily collections"
+                           EmptyMessage="No payments have been collected in the last fortnight." />
+            </div>
+        </div>
+
+        <div class="fc-card">
+            <div class="fc-card-head">
+                <div>
+                    <h3 class="fc-card-title">Payment methods</h3>
+                    <p class="fc-card-sub">How members are paying</p>
+                </div>
+            </div>
+            <div class="fc-card-body">
+                <DonutChart Slices="summary.PaymentMethods" CentreLabel="collected"
+                            Title="Payment methods"
+                            EmptyMessage="No settled payments to break down yet." />
+            </div>
+        </div>
+    </div>
+    }
+
+    <div class="fc-split">
+        <!-- ------------------------------------------------------------- Activity -->
+        <div class="fc-card">
+            <div class="fc-card-head">
+                <div>
+                    <h3 class="fc-card-title">Recent activity</h3>
+                    <p class="fc-card-sub">The latest records across every module</p>
+                </div>
+            </div>
+            <div class="fc-card-body">
+                @if (summary.RecentActivity.Count == 0)
+                {
+                    <EmptyState Title="No activity yet"
+                                Message="Once you record a sale, a payment or a new member, it will appear here."
+                                Icon="inbox" />
+                }
+                else
+                {
+                    <div class="fc-feed">
+                        @foreach (var item in summary.RecentActivity)
+                        {
+                            <a class="fc-feed-item" href="@item.Link" style="color:inherit; text-decoration:none;">
+                                <span class="fc-feed-icon tone-@FeedTone(item.Type)">
+                                    <Icon Name="@FeedIcon(item.Type)" Size="15" />
+                                </span>
+                                <span class="fc-feed-body">
+                                    <span class="fc-feed-title">@item.Title</span>
+                                    <span class="fc-feed-detail">@item.Detail</span>
+                                </span>
+                                <span class="fc-feed-meta">
+                                    @if (item.Amount.HasValue)
+                                    {
+                                        <span class="fc-feed-amount">@Money(item.Amount.Value)</span><br />
+                                    }
+                                    <span class="fc-feed-time">@Ago(item.OccurredAt)</span>
+                                </span>
+                            </a>
+                        }
+                    </div>
+                }
+            </div>
+        </div>
+
+        <div class="fc-stack">
+            @if (Auth.Can(Modules.Inventory))
+            {
+            <div class="fc-card">
+                <div class="fc-card-head">
+                    <h3 class="fc-card-title">Stock status</h3>
+                </div>
+                <div class="fc-card-body">
+                    <DonutChart Slices="summary.StockBreakdown" ShowCounts="true"
+                                CentreLabel="products" Title="Stock status"
+                                EmptyMessage="No products have been added yet." />
+                </div>
+            </div>
+            }
+
+            @if (ShowWorkforce)
+            {
+            <div class="fc-card">
+                <div class="fc-card-head">
+                    <h3 class="fc-card-title">Workforce and costs</h3>
+                </div>
+                <div class="fc-card-body">
+                    <dl class="fc-dl">
+                        @if (Auth.Can(Modules.Employees))
+                        {
+                            <dt>Employees</dt>
+                            <dd>@summary.ActiveEmployees.ToString("N0") active of @summary.TotalEmployees.ToString("N0")</dd>
+                        }
+
+                        @if (Auth.Can(Modules.Payroll))
+                        {
+                            <dt>Payroll this month</dt>
+                            <dd class="fc-num">@Money(summary.PayrollThisMonth)</dd>
+
+                            <dt>Payroll unpaid</dt>
+                            <dd class="fc-num">@Money(summary.PayrollOutstanding)</dd>
+                        }
+
+                        @if (Auth.Can(Modules.Expenses))
+                        {
+                            <dt>Expenses this month</dt>
+                            <dd class="fc-num">@Money(summary.ExpensesThisMonth)</dd>
+
+                            <dt>Expenses all time</dt>
+                            <dd class="fc-num">@Money(summary.ExpensesTotal)</dd>
+                        }
+
+                        <dt>Net this month</dt>
+                        <dd class="fc-num @(summary.NetThisMonth >= 0 ? "fc-pos" : "fc-neg")">
+                            @Money(summary.NetThisMonth)
+                        </dd>
+                    </dl>
+                </div>
+                @if (Auth.Can(Modules.Reports))
+                {
+                    <div class="fc-card-foot">
+                        <a class="fc-btn fc-btn-secondary fc-btn-sm" href="fitcore/reports">
+                            <Icon Name="reports" Size="14" /> Open reports
+                        </a>
+                    </div>
+                }
+            </div>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    /// <summary>
+    /// Whether the workforce panel is worth drawing at all. It reports on employees, payroll
+    /// and expenses, so it appears only for somebody holding at least one of them - which
+    /// also keeps it off a Micro tenant, where employees and payroll do not exist.
+    /// </summary>
+    private bool ShowWorkforce =>
+        Auth.Can(Modules.Employees) || Auth.Can(Modules.Payroll) || Auth.Can(Modules.Expenses);
+
+    private DashboardSummaryDto? summary;
+    private bool isLoading = true;
+    private string? errorMessage;
+
+    private enum TrendMode { Daily, Monthly }
+    private TrendMode trendMode = TrendMode.Daily;
+
+    protected override Task OnInitializedAsync() => ReloadAsync();
+
+    private async Task ReloadAsync()
+    {
+        isLoading = true;
+        errorMessage = null;
+
+        var result = await ReportsApi.GetDashboardAsync();
+
+        if (result.IsSuccess)
+        {
+            summary = result.Value;
+        }
+        else
+        {
+            errorMessage = result.ErrorMessage;
+        }
+
+        isLoading = false;
+    }
+
+    private decimal AverageSale =>
+        summary is null || summary.SalesCount == 0 ? 0m : summary.SalesTotal / summary.SalesCount;
+
+    private static string Money(decimal value) => value.ToString("N2");
+
+    private static string FeedIcon(string type) => type switch
+    {
+        "Sale" => "sales",
+        "Payment" => "payment",
+        "Member" => "members",
+        "Stock" => "box",
+        "Expense" => "expense",
+        _ => "info"
+    };
+
+    private static string FeedTone(string type) => type switch
+    {
+        "Sale" => "blue",
+        "Payment" => "green",
+        "Member" => "blue",
+        "Stock" => "slate",
+        "Expense" => "amber",
+        _ => "slate"
+    };
+
+    /// <summary>Relative time, so the feed reads as a feed rather than a list of timestamps.</summary>
+    private static string Ago(DateTime utc)
+    {
+        var span = DateTime.UtcNow - utc;
+
+        if (span.TotalSeconds < 60) return "just now";
+        if (span.TotalMinutes < 60) return $"{(int)span.TotalMinutes}m ago";
+        if (span.TotalHours < 24) return $"{(int)span.TotalHours}h ago";
+        if (span.TotalDays < 7) return $"{(int)span.TotalDays}d ago";
+
+        return utc.ToLocalTime().ToString("d MMM");
+    }
+}

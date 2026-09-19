@@ -1,0 +1,151 @@
+using ERP_domain.entities;
+using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
+
+namespace ERP_infrastructure.data
+{
+    /// <summary>
+    /// The platform-wide database: which companies exist, where each one's tenant database
+    /// lives, and who is allowed to sign in to which company.
+    ///
+    /// Sign-in lives here rather than in a tenant database because a user is what *chooses* a
+    /// tenant. If the account were stored per tenant the server would need to know the tenant
+    /// before it could authenticate, which is the wrong way round and is exactly how a header
+    /// ends up being trusted.
+    /// </summary>
+    public class MasterErpDbContext : IdentityDbContext
+    {
+        public MasterErpDbContext(DbContextOptions<MasterErpDbContext> options)
+            : base(options)
+        {
+        }
+
+        public DbSet<Company> Companies => Set<Company>();
+        public DbSet<CompanyDatabase> CompanyDatabases => Set<CompanyDatabase>();
+        public DbSet<Device> Devices => Set<Device>();
+
+        // Access control.
+        public DbSet<AppRole> AppRoles => Set<AppRole>();
+        public DbSet<AppRolePermission> AppRolePermissions => Set<AppRolePermission>();
+        public DbSet<AppUser> AppUsers => Set<AppUser>();
+        public DbSet<AppUserPermission> AppUserPermissions => Set<AppUserPermission>();
+
+        protected override void OnModelCreating(ModelBuilder builder)
+        {
+            base.OnModelCreating(builder);
+
+            builder.Entity<Company>(entity =>
+            {
+                entity.HasKey(x => x.CompanyId);
+                entity.Property(x => x.CompanyCode).IsRequired().HasMaxLength(50);
+                entity.Property(x => x.CompanyName).IsRequired().HasMaxLength(200);
+                entity.HasIndex(x => x.CompanyCode).IsUnique();
+
+                // Stored as the underlying int. Existing rows predate the column, so the
+                // default keeps them on the tier they already behave as.
+                entity.Property(x => x.EnterpriseTier)
+                      .HasConversion<int>()
+                      .IsRequired()
+                      .HasDefaultValue(EnterpriseTier.Micro);
+            });
+
+            builder.Entity<CompanyDatabase>(entity =>
+            {
+                entity.HasKey(x => x.CompanyDatabaseId);
+                entity.Property(x => x.ServerName).IsRequired().HasMaxLength(200);
+                entity.Property(x => x.DatabaseName).IsRequired().HasMaxLength(200);
+                entity.Property(x => x.IsActive).IsRequired();
+                entity.HasOne(x => x.Company)
+                      .WithMany()
+                      .HasForeignKey(x => x.CompanyId)
+                      .OnDelete(DeleteBehavior.Restrict);
+            });
+
+            builder.Entity<Device>(entity =>
+            {
+                entity.HasKey(x => x.DeviceId);
+                entity.Property(x => x.DeviceCode).HasMaxLength(50).IsRequired();
+                entity.Property(x => x.DeviceName).HasMaxLength(200).IsRequired();
+                entity.HasOne(x => x.Company)
+                      .WithMany(x => x.Devices)
+                      .HasForeignKey(x => x.CompanyId)
+                      .OnDelete(DeleteBehavior.Restrict);
+                entity.HasIndex(x => new { x.CompanyId, x.DeviceCode }).IsUnique();
+            });
+
+            ConfigureAccessControl(builder);
+        }
+
+        private static void ConfigureAccessControl(ModelBuilder builder)
+        {
+            builder.Entity<AppRole>(entity =>
+            {
+                entity.HasKey(x => x.RoleId);
+                entity.Property(x => x.RoleKey).IsRequired().HasMaxLength(40);
+                entity.Property(x => x.DisplayName).IsRequired().HasMaxLength(80);
+                entity.Property(x => x.CreatedAt).IsRequired().HasDefaultValueSql("GETUTCDATE()");
+                entity.HasIndex(x => x.RoleKey).IsUnique();
+            });
+
+            builder.Entity<AppRolePermission>(entity =>
+            {
+                entity.HasKey(x => x.AppRolePermissionId);
+                entity.Property(x => x.Module).IsRequired().HasMaxLength(40);
+
+                entity.HasOne(x => x.Role)
+                      .WithMany(r => r.Permissions)
+                      .HasForeignKey(x => x.RoleId)
+                      .OnDelete(DeleteBehavior.Cascade);
+
+                // A role either grants a module or it does not; two rows would be ambiguous.
+                entity.HasIndex(x => new { x.RoleId, x.Module }).IsUnique();
+            });
+
+            builder.Entity<AppUser>(entity =>
+            {
+                entity.HasKey(x => x.AppUserId);
+                entity.Property(x => x.Username).IsRequired().HasMaxLength(100);
+                entity.Property(x => x.Email).IsRequired().HasMaxLength(200).HasDefaultValue("");
+                entity.Property(x => x.FullName).IsRequired().HasMaxLength(200);
+                entity.Property(x => x.PasswordHash).IsRequired().HasMaxLength(400);
+                entity.Property(x => x.IsActive).IsRequired().HasDefaultValue(true);
+                entity.Property(x => x.CreatedAt).IsRequired().HasDefaultValueSql("GETUTCDATE()");
+
+                // Sign-in asks for a username and nothing else, so the name has to identify a
+                // single account platform-wide rather than one per company.
+                entity.HasIndex(x => x.Username).IsUnique();
+
+                entity.HasOne(x => x.Company)
+                      .WithMany(c => c.Users)
+                      .HasForeignKey(x => x.CompanyId)
+                      .OnDelete(DeleteBehavior.Restrict);
+
+                // Removing a role would otherwise orphan its users into having no permissions
+                // at all, which reads as a broken account rather than a deliberate one.
+                entity.HasOne(x => x.Role)
+                      .WithMany(r => r.Users)
+                      .HasForeignKey(x => x.RoleId)
+                      .OnDelete(DeleteBehavior.Restrict);
+
+                entity.HasIndex(x => x.CompanyId);
+            });
+
+            builder.Entity<AppUserPermission>(entity =>
+            {
+                entity.HasKey(x => x.AppUserPermissionId);
+                entity.Property(x => x.Module).IsRequired().HasMaxLength(40);
+                entity.Property(x => x.UpdatedBy).IsRequired().HasMaxLength(100).HasDefaultValue("");
+                entity.Property(x => x.UpdatedAt).IsRequired().HasDefaultValueSql("GETUTCDATE()");
+
+                entity.HasOne(x => x.User)
+                      .WithMany(u => u.Permissions)
+                      .HasForeignKey(x => x.AppUserId)
+                      .OnDelete(DeleteBehavior.Cascade);
+
+                // One decision per module per user. The unique index is what makes "grant then
+                // revoke" an update rather than a second contradictory row.
+                entity.HasIndex(x => new { x.AppUserId, x.Module }).IsUnique();
+            });
+        }
+    }
+}

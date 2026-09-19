@@ -1,0 +1,101 @@
+@*
+    Decides, for each navigation, whether the signed-in user may see the page at all.
+
+    Three outcomes:
+      - not signed in  -> the sign-in page, remembering where they were going
+      - signed in but without the module -> a plain "no access" panel
+      - otherwise      -> the page
+
+    This is a courtesy, not a security boundary. Every endpoint the page would call applies
+    the same rule again on the server and answers 403 for a module the caller does not hold,
+    so getting past this by hand achieves nothing.
+*@
+
+@inject AuthApiService Auth
+@inject NavigationManager Nav
+
+@if (!Auth.IsSignedIn && !isLoginPage)
+{
+    @* Shown for the moment between deciding to redirect and the redirect taking effect. *@
+    <div class="fc-boot">
+        <div class="fc-spinner"></div>
+        <div class="fc-boot-text">Taking you to sign in&hellip;</div>
+    </div>
+}
+else if (deniedModule is not null)
+{
+    <LayoutView Layout="@typeof(MainLayout)">
+        <div class="fc-page">
+            <div class="fc-denied">
+                <div class="fc-denied-mark"><Icon Name="shield" Size="30" /></div>
+                <h1>You do not have access to this page</h1>
+                <p class="fc-muted">
+                    Your account does not include <strong>@FriendlyName(deniedModule)</strong>.
+                    An administrator can grant it from the User Access screen.
+                </p>
+                <div class="fc-denied-actions">
+                    <a class="fc-btn primary" href="fitcore/dashboard">
+                        <Icon Name="dashboard" Size="16" /> Back to dashboard
+                    </a>
+                </div>
+            </div>
+        </div>
+    </LayoutView>
+}
+else
+{
+    <RouteView RouteData="@RouteData" DefaultLayout="@typeof(MainLayout)" />
+}
+
+@code {
+    [Parameter, EditorRequired] public RouteData RouteData { get; set; } = default!;
+
+    private string? deniedModule;
+
+    /// <summary>
+    /// The sign-in page is the one route that must stay reachable while signed out, so it is
+    /// tracked as state: the markup needs it to know that "signed out" here means "render the
+    /// page", not "redirect".
+    /// </summary>
+    private bool isLoginPage;
+
+    protected override void OnParametersSet()
+    {
+        deniedModule = null;
+
+        var path = Nav.ToBaseRelativePath(Nav.Uri).Split('?')[0].Trim('/');
+
+        isLoginPage = string.Equals(path, "login", StringComparison.OrdinalIgnoreCase);
+
+        if (!Auth.IsSignedIn)
+        {
+            if (!isLoginPage)
+            {
+                Nav.NavigateTo($"login?returnUrl=/{Uri.EscapeDataString(path)}", replace: true);
+            }
+
+            return;
+        }
+
+        if (isLoginPage)
+        {
+            Nav.NavigateTo("fitcore/dashboard", replace: true);
+            return;
+        }
+
+        // Routes outside the catalogue - the landing redirect, the not-found page - are not
+        // module-gated; there is nothing tenant-owned on them to protect.
+        var module = NavigationCatalogue.ModuleForPath(path);
+
+        if (module is not null && !Auth.Can(module))
+        {
+            deniedModule = module;
+        }
+    }
+
+    private static string FriendlyName(string module) =>
+        NavigationCatalogue.Groups
+            .SelectMany(g => g.Entries)
+            .FirstOrDefault(e => e.Module == module)?.Label
+        ?? module;
+}

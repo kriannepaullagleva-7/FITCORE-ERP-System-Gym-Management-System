@@ -1,0 +1,622 @@
+@page "/fitcore/members"
+@inject MemberApiService MemberApi
+@inject ReportsApiService ReportsApi
+@inject ToastService Toasts
+@inject NavigationManager Nav
+
+@*
+    Membership.
+
+    The grid is built from api/reports/membership-overview, which joins each member to their
+    current subscription and to what they have actually paid. That is why the plan, expiry and
+    payment columns are real values rather than blanks: they are calculated on the server from
+    the subscription and payment records, not guessed here.
+*@
+
+<PageTitle>Members - FitCore ERP</PageTitle>
+
+<PageHeader Title="Members"
+            Description="Every member in this gym, with their current plan, expiry and balance."
+            Crumbs="crumbs">
+    <Actions>
+        <button class="fc-btn fc-btn-secondary" @onclick="ReloadAsync" disabled="@isLoading">
+            <Icon Name="refresh" Size="15" /> Refresh
+        </button>
+        <button class="fc-btn fc-btn-primary" @onclick="OpenCreate">
+            <Icon Name="plus" Size="15" /> Add member
+        </button>
+    </Actions>
+</PageHeader>
+
+<Alert Message="@pageError" Kind="error" OnDismiss="() => pageError = null" />
+
+<div class="fc-kpi-grid">
+    <StatCard Label="Total members" Value="@rows.Count.ToString("N0")" Icon="members" Tone="blue" />
+    <StatCard Label="Active" Value="@rows.Count(r => r.MemberStatus == "Active").ToString("N0")"
+              Icon="check" Tone="green" />
+    <StatCard Label="Expiring soon" Value="@rows.Count(r => r.MembershipStatus == "Expiring Soon").ToString("N0")"
+              Hint="Within 14 days" Icon="alert" Tone="amber" />
+    <StatCard Label="Expired" Value="@rows.Count(r => r.MembershipStatus == "Expired").ToString("N0")"
+              Icon="ban" Tone="red" />
+    <StatCard Label="Outstanding" Value="@rows.Sum(r => r.Balance).ToString("N2")"
+              Hint="Membership dues still owed" Icon="money" Tone="slate" />
+</div>
+
+<div class="fc-filters">
+    <div class="fc-filter fc-filter-grow">
+        <label class="fc-label" for="member-search">Search</label>
+        <div class="fc-search">
+            <Icon Name="search" Size="15" />
+            <input id="member-search" class="fc-input" placeholder="Name, email or phone"
+                   value="@searchTerm" @oninput="OnSearchInput" />
+        </div>
+    </div>
+
+    <div class="fc-filter">
+        <label class="fc-label" for="member-status">Member status</label>
+        <select id="member-status" class="fc-select" @bind="memberStatusFilter">
+            <option value="">All statuses</option>
+            <option value="Active">Active</option>
+            <option value="Inactive">Inactive</option>
+            <option value="Suspended">Suspended</option>
+        </select>
+    </div>
+
+    <div class="fc-filter">
+        <label class="fc-label" for="membership-status">Membership</label>
+        <select id="membership-status" class="fc-select" @bind="membershipFilter">
+            <option value="">All memberships</option>
+            <option value="Active">Active</option>
+            <option value="Expiring Soon">Expiring soon</option>
+            <option value="Expired">Expired</option>
+            <option value="Cancelled">Cancelled</option>
+            <option value="No Plan">No plan</option>
+        </select>
+    </div>
+
+    <div class="fc-filter">
+        <label class="fc-label" for="plan-filter">Plan</label>
+        <select id="plan-filter" class="fc-select" @bind="planFilter">
+            <option value="">All plans</option>
+            @foreach (var plan in rows.Select(r => r.PlanName).Distinct().OrderBy(p => p))
+            {
+                <option value="@plan">@plan</option>
+            }
+        </select>
+    </div>
+
+    <button class="fc-btn fc-btn-secondary" @onclick="ClearFilters">
+        <Icon Name="x" Size="14" /> Clear
+    </button>
+</div>
+
+<div class="fc-card">
+    <div class="fc-card-head">
+        <div>
+            <h3 class="fc-card-title">Member list</h3>
+            <p class="fc-card-sub">
+                Showing @Filtered.Count of @rows.Count member(s)
+            </p>
+        </div>
+    </div>
+
+    <div class="fc-card-body is-flush">
+        @if (isLoading)
+        {
+            <LoadingState AsSkeleton="true" Rows="6" />
+        }
+        else if (rows.Count == 0)
+        {
+            <EmptyState Title="No members yet"
+                        Message="Add your first member to start selling memberships and recording payments."
+                        Icon="members">
+                <Action>
+                    <button class="fc-btn fc-btn-primary" @onclick="OpenCreate">
+                        <Icon Name="plus" Size="15" /> Add the first member
+                    </button>
+                </Action>
+            </EmptyState>
+        }
+        else if (Filtered.Count == 0)
+        {
+            <EmptyState Title="No members match those filters"
+                        Message="Try a different search term, or clear the filters to see everyone."
+                        Icon="filter">
+                <Action>
+                    <button class="fc-btn fc-btn-secondary" @onclick="ClearFilters">Clear filters</button>
+                </Action>
+            </EmptyState>
+        }
+        else
+        {
+            <div class="fc-table-wrap">
+                <table class="fc-table">
+                    <thead>
+                        <tr>
+                            <SortableHeader State="table" Column="Id" Label="ID" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Column="Name" Label="Name" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Column="Contact" Label="Contact" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Column="Plan" Label="Membership" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Column="Status" Label="Status" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Column="Joined" Label="Joined" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Column="Expires" Label="Expires" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Column="Balance" Label="Balance" CssClass="fc-right" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Label="Actions" CssClass="fc-right" />
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var row in PageRows)
+                        {
+                            <tr>
+                                <td class="fc-id">#@row.MemberId</td>
+                                <td>
+                                    <span class="fc-cell-strong">@row.FullName</span>
+                                    <span class="fc-cell-sub">@(string.IsNullOrWhiteSpace(row.Email) ? "no email" : row.Email)</span>
+                                </td>
+                                <td class="fc-nowrap">@(string.IsNullOrWhiteSpace(row.Phone) ? "-" : row.Phone)</td>
+                                <td>
+                                    <span class="fc-cell-strong">@row.PlanName</span>
+                                    @if (row.PlanPrice > 0)
+                                    {
+                                        <span class="fc-cell-sub fc-num">@row.PlanPrice.ToString("N2")</span>
+                                    }
+                                </td>
+                                <td>
+                                    <StatusBadge Status="@row.MembershipStatus" />
+                                    @if (row.MemberStatus != "Active")
+                                    {
+                                        <span class="fc-cell-sub">member @row.MemberStatus.ToLowerInvariant()</span>
+                                    }
+                                </td>
+                                <td class="fc-nowrap fc-small">@row.JoinDate.ToLocalTime().ToString("d MMM yyyy")</td>
+                                <td class="fc-nowrap fc-small">
+                                    @if (row.ExpiryDate.HasValue)
+                                    {
+                                        @row.ExpiryDate.Value.ToLocalTime().ToString("d MMM yyyy")
+                                        @if (row.DaysRemaining.HasValue && row.DaysRemaining.Value >= 0)
+                                        {
+                                            <span class="fc-cell-sub">@row.DaysRemaining.Value day(s) left</span>
+                                        }
+                                    }
+                                    else
+                                    {
+                                        <span class="fc-muted">-</span>
+                                    }
+                                </td>
+                                <td class="fc-right fc-num">
+                                    @if (row.Balance > 0)
+                                    {
+                                        <span class="fc-neg fc-strong">@row.Balance.ToString("N2")</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="fc-muted">0.00</span>
+                                    }
+                                </td>
+                                <td class="fc-right">
+                                    <span class="fc-actions">
+                                        <button class="fc-act" title="View member" @onclick="() => OpenDetail(row)">
+                                            <Icon Name="eye" Size="14" />
+                                        </button>
+                                        <button class="fc-act" title="Edit member" @onclick="() => OpenEditAsync(row.MemberId)">
+                                            <Icon Name="edit" Size="14" />
+                                        </button>
+                                        <button class="fc-act is-danger" title="Delete member"
+                                                @onclick="() => AskDelete(row)">
+                                            <Icon Name="trash" Size="14" />
+                                        </button>
+                                    </span>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            <Pagination State="table" OnChanged="StateHasChanged" />
+        }
+    </div>
+</div>
+
+<!-- ------------------------------------------------------------------ Create / edit -->
+
+<Modal IsOpen="showEditor" Title="@(editingId is null ? "Add member" : $"Edit member #{editingId}")"
+       Subtitle="@(editingId is null ? "The member is saved to your tenant database." : "Changes are written straight through to the database.")"
+       OnClose="CloseEditor">
+    <ChildContent>
+        <Alert Message="@formError" Kind="error" />
+
+        <div class="fc-form-grid">
+            <div class="fc-field">
+                <label class="fc-label" for="first-name">First name<span class="fc-req">*</span></label>
+                <input id="first-name" class="fc-input @(Invalid(nameof(form.FirstName)))" @bind="form.FirstName" />
+                @if (fieldErrors.TryGetValue(nameof(form.FirstName), out var firstNameError))
+                {
+                    <span class="fc-error">@firstNameError</span>
+                }
+            </div>
+
+            <div class="fc-field">
+                <label class="fc-label" for="last-name">Last name<span class="fc-req">*</span></label>
+                <input id="last-name" class="fc-input @(Invalid(nameof(form.LastName)))" @bind="form.LastName" />
+                @if (fieldErrors.TryGetValue(nameof(form.LastName), out var lastNameError))
+                {
+                    <span class="fc-error">@lastNameError</span>
+                }
+            </div>
+
+            <div class="fc-field">
+                <label class="fc-label" for="phone">Phone</label>
+                <input id="phone" class="fc-input @(Invalid(nameof(form.Phone)))" @bind="form.Phone"
+                       placeholder="09XX XXX XXXX" />
+                @if (fieldErrors.TryGetValue(nameof(form.Phone), out var phoneError))
+                {
+                    <span class="fc-error">@phoneError</span>
+                }
+            </div>
+
+            <div class="fc-field">
+                <label class="fc-label" for="email">Email</label>
+                <input id="email" type="email" class="fc-input @(Invalid(nameof(form.Email)))" @bind="form.Email"
+                       placeholder="name@example.com" />
+                @if (fieldErrors.TryGetValue(nameof(form.Email), out var emailError))
+                {
+                    <span class="fc-error">@emailError</span>
+                }
+                else
+                {
+                    <span class="fc-hint">Optional, but it must be a valid address if given.</span>
+                }
+            </div>
+
+            @if (editingId is not null)
+            {
+                <div class="fc-field">
+                    <label class="fc-label" for="status">Status</label>
+                    <select id="status" class="fc-select" @bind="form.Status">
+                        <option value="Active">Active</option>
+                        <option value="Inactive">Inactive</option>
+                        <option value="Suspended">Suspended</option>
+                    </select>
+                </div>
+            }
+        </div>
+    </ChildContent>
+
+    <Footer>
+        <button class="fc-btn fc-btn-secondary" @onclick="CloseEditor" disabled="@isSaving">Cancel</button>
+        <button class="fc-btn fc-btn-success" @onclick="SaveAsync" disabled="@isSaving">
+            @if (isSaving)
+            {
+                <span class="fc-spinner is-sm"></span>
+            }
+            else
+            {
+                <Icon Name="check" Size="15" />
+            }
+            @(editingId is null ? "Create member" : "Save changes")
+        </button>
+    </Footer>
+</Modal>
+
+<!-- ------------------------------------------------------------------ Detail -->
+
+<Modal IsOpen="detail is not null" Title="@(detail?.FullName ?? "")"
+       Subtitle="@($"Member #{detail?.MemberId}")" OnClose="() => detail = null"
+       CloseOnBackdropClick="true">
+    <ChildContent>
+        @if (detail is not null)
+        {
+            <dl class="fc-dl">
+                <dt>Member status</dt>
+                <dd><StatusBadge Status="@detail.MemberStatus" /></dd>
+
+                <dt>Phone</dt>
+                <dd>@(string.IsNullOrWhiteSpace(detail.Phone) ? "-" : detail.Phone)</dd>
+
+                <dt>Email</dt>
+                <dd>@(string.IsNullOrWhiteSpace(detail.Email) ? "-" : detail.Email)</dd>
+
+                <dt>Joined</dt>
+                <dd>@detail.JoinDate.ToLocalTime().ToString("d MMMM yyyy")</dd>
+
+                <dt>Plan</dt>
+                <dd>@detail.PlanName @(detail.PlanPrice > 0 ? $"({detail.PlanPrice:N2})" : "")</dd>
+
+                <dt>Membership</dt>
+                <dd><StatusBadge Status="@detail.MembershipStatus" /></dd>
+
+                <dt>Starts</dt>
+                <dd>@(detail.StartDate?.ToLocalTime().ToString("d MMM yyyy") ?? "-")</dd>
+
+                <dt>Expires</dt>
+                <dd>@(detail.ExpiryDate?.ToLocalTime().ToString("d MMM yyyy") ?? "-")</dd>
+
+                <dt>Paid</dt>
+                <dd class="fc-num">@detail.AmountPaid.ToString("N2")</dd>
+
+                <dt>Balance</dt>
+                <dd class="fc-num @(detail.Balance > 0 ? "fc-neg" : "fc-pos")">@detail.Balance.ToString("N2")</dd>
+
+                <dt>Payment status</dt>
+                <dd><StatusBadge Status="@detail.PaymentStatus" /></dd>
+            </dl>
+        }
+    </ChildContent>
+
+    <Footer>
+        <button class="fc-btn fc-btn-secondary" @onclick="() => detail = null">Close</button>
+        <button class="fc-btn fc-btn-secondary" @onclick=@(() => Nav.NavigateTo("fitcore/subscriptions"))>
+            <Icon Name="subscription" Size="15" /> Subscriptions
+        </button>
+        <button class="fc-btn fc-btn-primary" @onclick=@(() => Nav.NavigateTo("fitcore/payments"))>
+            <Icon Name="payment" Size="15" /> Payments
+        </button>
+    </Footer>
+</Modal>
+
+<!-- ------------------------------------------------------------------ Delete -->
+
+<ConfirmDialog IsOpen="pendingDelete is not null"
+               Title="Delete this member?"
+               Message="@($"{pendingDelete?.FullName} will be removed from the database.")"
+               Warning="A member with subscriptions, payments or sales cannot be deleted. The server will refuse and tell you to deactivate them instead."
+               ConfirmText="Delete member"
+               IsBusy="isDeleting"
+               OnConfirm="ConfirmDeleteAsync"
+               OnCancel="() => pendingDelete = null" />
+
+@code {
+    private readonly List<PageHeader.Crumb> crumbs = new() { new("Membership"), new("Members") };
+
+    private List<MembershipOverviewDto> rows = new();
+    private bool isLoading = true;
+    private string? pageError;
+
+    // Sorting and paging for the grid. Newest member first is the default, which is what the
+    // list was already ordered by.
+    private readonly TableState<MembershipOverviewDto> table =
+        new TableState<MembershipOverviewDto>(defaultSort: "Id", descending: true)
+            .Column("Id", r => r.MemberId)
+            .Column("Name", r => r.FullName)
+            .Column("Contact", r => r.Phone)
+            .Column("Plan", r => r.PlanName)
+            .Column("Status", r => r.MembershipStatus)
+            .Column("Joined", r => r.JoinDate)
+            .Column("Expires", r => r.ExpiryDate ?? DateTime.MaxValue)
+            .Column("Balance", r => r.Balance);
+
+    private string searchTerm = "";
+    private string memberStatusFilter = "";
+    private string membershipFilter = "";
+    private string planFilter = "";
+
+    private bool showEditor;
+    private int? editingId;
+    private UpdateMemberDto form = new();
+    private string? formError;
+    private Dictionary<string, string> fieldErrors = new();
+    private bool isSaving;
+
+    private MembershipOverviewDto? detail;
+    private MembershipOverviewDto? pendingDelete;
+    private bool isDeleting;
+
+    protected override Task OnInitializedAsync() => ReloadAsync();
+
+    private async Task ReloadAsync()
+    {
+        isLoading = true;
+        pageError = null;
+
+        var result = await ReportsApi.GetMembershipOverviewAsync();
+
+        if (result.IsSuccess)
+        {
+            rows = result.Value ?? new();
+        }
+        else
+        {
+            pageError = result.ErrorMessage;
+        }
+
+        isLoading = false;
+    }
+
+    /// <summary>
+    /// Filtering happens over the overview the server already returned. The dataset is one
+    /// row per member, so narrowing it here avoids a round trip for every keystroke.
+    /// </summary>
+    private List<MembershipOverviewDto> Filtered
+    {
+        get
+        {
+            IEnumerable<MembershipOverviewDto> query = rows;
+
+            if (!string.IsNullOrWhiteSpace(searchTerm))
+            {
+                var term = searchTerm.Trim();
+                query = query.Where(r =>
+                    r.FullName.Contains(term, StringComparison.OrdinalIgnoreCase) ||
+                    r.Email.Contains(term, StringComparison.OrdinalIgnoreCase) ||
+                    r.Phone.Contains(term, StringComparison.OrdinalIgnoreCase) ||
+                    r.MemberId.ToString() == term);
+            }
+
+            if (!string.IsNullOrEmpty(memberStatusFilter))
+                query = query.Where(r => r.MemberStatus == memberStatusFilter);
+
+            if (!string.IsNullOrEmpty(membershipFilter))
+                query = query.Where(r => r.MembershipStatus == membershipFilter);
+
+            if (!string.IsNullOrEmpty(planFilter))
+                query = query.Where(r => r.PlanName == planFilter);
+
+            return query.ToList();
+        }
+    }
+
+    /// <summary>The filtered rows, sorted and cut down to the page actually on screen.</summary>
+    private List<MembershipOverviewDto> PageRows => table.Apply(Filtered);
+
+    private void OnSearchInput(ChangeEventArgs args) => searchTerm = args.Value?.ToString() ?? "";
+
+    private void ClearFilters()
+    {
+        searchTerm = "";
+        memberStatusFilter = "";
+        membershipFilter = "";
+        planFilter = "";
+    }
+
+    private void OpenCreate()
+    {
+        editingId = null;
+        form = new UpdateMemberDto { Status = "Active" };
+        fieldErrors = new();
+        formError = null;
+        showEditor = true;
+    }
+
+    private async Task OpenEditAsync(int memberId)
+    {
+        // Read the member fresh rather than reusing the overview row, so the form edits what
+        // is actually stored rather than a flattened projection of it.
+        var result = await MemberApi.GetByIdAsync(memberId);
+
+        if (!result.IsSuccess || result.Value is null)
+        {
+            pageError = result.ErrorMessage ?? "That member could not be loaded.";
+            return;
+        }
+
+        var member = result.Value;
+
+        editingId = memberId;
+        form = new UpdateMemberDto
+        {
+            FirstName = member.FirstName,
+            LastName = member.LastName,
+            Phone = member.Phone,
+            Email = member.Email,
+            Status = member.Status
+        };
+
+        fieldErrors = new();
+        formError = null;
+        showEditor = true;
+    }
+
+    private void CloseEditor()
+    {
+        showEditor = false;
+        editingId = null;
+        formError = null;
+    }
+
+    private string Invalid(string field) => fieldErrors.ContainsKey(field) ? "is-invalid" : "";
+
+    /// <summary>
+    /// Client-side checks so obvious mistakes are caught before a round trip. The server
+    /// validates the same rules independently; this is a convenience, not the guarantee.
+    /// </summary>
+    private bool Validate()
+    {
+        fieldErrors = new();
+
+        if (string.IsNullOrWhiteSpace(form.FirstName))
+            fieldErrors[nameof(form.FirstName)] = "A first name is required.";
+
+        if (string.IsNullOrWhiteSpace(form.LastName))
+            fieldErrors[nameof(form.LastName)] = "A last name is required.";
+
+        if (!string.IsNullOrWhiteSpace(form.Email) &&
+            (!form.Email.Contains('@') || form.Email.StartsWith('@') || form.Email.EndsWith('@') ||
+             !form.Email[(form.Email.IndexOf('@') + 1)..].Contains('.')))
+        {
+            fieldErrors[nameof(form.Email)] = "That does not look like a valid email address.";
+        }
+
+        if (!string.IsNullOrWhiteSpace(form.Phone) && form.Phone.Trim().Length < 7)
+            fieldErrors[nameof(form.Phone)] = "A phone number needs at least 7 digits.";
+
+        return fieldErrors.Count == 0;
+    }
+
+    private async Task SaveAsync()
+    {
+        formError = null;
+
+        if (!Validate()) return;
+
+        isSaving = true;
+
+        var succeeded = false;
+        string? message = null;
+
+        if (editingId is null)
+        {
+            var result = await MemberApi.CreateAsync(new CreateMemberDto
+            {
+                FirstName = form.FirstName,
+                LastName = form.LastName,
+                Phone = form.Phone,
+                Email = form.Email
+            });
+
+            succeeded = result.IsSuccess;
+            message = result.ErrorMessage;
+        }
+        else
+        {
+            var result = await MemberApi.UpdateAsync(editingId.Value, form);
+            succeeded = result.IsSuccess;
+            message = result.ErrorMessage;
+        }
+
+        isSaving = false;
+
+        if (!succeeded)
+        {
+            formError = message;
+            return;
+        }
+
+        Toasts.Success(editingId is null
+            ? $"{form.FirstName} {form.LastName} was added."
+            : $"{form.FirstName} {form.LastName} was updated.");
+
+        CloseEditor();
+
+        // Re-read rather than patching the list in place, so the screen shows what the
+        // database now holds instead of what the browser thinks it should hold.
+        await ReloadAsync();
+    }
+
+    private void OpenDetail(MembershipOverviewDto row) => detail = row;
+
+    private void AskDelete(MembershipOverviewDto row) => pendingDelete = row;
+
+    private async Task ConfirmDeleteAsync()
+    {
+        if (pendingDelete is null) return;
+
+        isDeleting = true;
+
+        var result = await MemberApi.DeleteAsync(pendingDelete.MemberId);
+
+        isDeleting = false;
+
+        if (!result.IsSuccess)
+        {
+            pageError = result.ErrorMessage;
+            pendingDelete = null;
+            return;
+        }
+
+        Toasts.Success($"{pendingDelete.FullName} was deleted.", "Member removed");
+        pendingDelete = null;
+
+        await ReloadAsync();
+    }
+}

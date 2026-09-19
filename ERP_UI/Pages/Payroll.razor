@@ -1,0 +1,599 @@
+@page "/fitcore/payroll"
+@inject PayrollApiService PayrollApi
+@inject EmployeeApiService EmployeeApi
+@inject ToastService Toasts
+
+@*
+    Payroll. Gross and net pay are never entered: the server calculates
+    GrossPay = BasicSalary + Allowances + OvertimePay and NetPay = GrossPay - Deductions from
+    whatever this form submits, and stores the result so a payslip still shows what was
+    actually paid even if the employee's salary or overtime rate changes afterwards.
+*@
+
+<PageTitle>Payroll - FitCore ERP</PageTitle>
+
+<PageHeader Title="Payroll"
+            Description="Pay runs for your staff, with gross and net calculated on the server."
+            Crumbs="crumbs">
+    <Actions>
+        <button class="fc-btn fc-btn-secondary" @onclick="ReloadAsync" disabled="@isLoading">
+            <Icon Name="refresh" Size="15" /> Refresh
+        </button>
+        <button class="fc-btn fc-btn-primary" @onclick="OpenCreate" disabled="@(employees.Count == 0)">
+            <Icon Name="plus" Size="15" /> New pay run
+        </button>
+    </Actions>
+</PageHeader>
+
+<Alert Message="@pageError" Kind="error" OnDismiss="() => pageError = null" />
+
+@if (employees.Count == 0 && !isLoading)
+{
+    <Alert Kind="warning" Title="No employees yet"
+           Message="Add an employee before running payroll." />
+}
+
+@if (summary is not null)
+{
+    <div class="fc-kpi-grid">
+        <StatCard Label="Pay runs" Value="@summary.RunCount.ToString("N0")"
+                  Hint="@($"{summary.EmployeeCount:N0} employee(s)")" Icon="payroll" Tone="blue" />
+        <StatCard Label="Total gross" Value="@summary.TotalGross.ToString("N2")" Icon="money" Tone="slate" />
+        <StatCard Label="Total net" Value="@summary.TotalNet.ToString("N2")"
+                  Hint="@($"{summary.TotalDeductions:N2} deducted")" Icon="trend-up" Tone="green" />
+        <StatCard Label="Paid out" Value="@summary.TotalPaid.ToString("N2")" Icon="check" Tone="green" />
+        <StatCard Label="Outstanding" Value="@summary.TotalOutstanding.ToString("N2")"
+                  Hint="Draft and approved runs" Icon="alert"
+                  Tone="@(summary.TotalOutstanding > 0 ? "amber" : "green")" />
+    </div>
+}
+
+<div class="fc-filters">
+    <div class="fc-filter fc-filter-grow">
+        <label class="fc-label" for="pr-search">Search</label>
+        <div class="fc-search">
+            <Icon Name="search" Size="15" />
+            <input id="pr-search" class="fc-input" placeholder="Employee name or code"
+                   value="@searchTerm" @oninput="OnSearchInput" />
+        </div>
+    </div>
+
+    <div class="fc-filter">
+        <label class="fc-label" for="pr-status">Status</label>
+        <select id="pr-status" class="fc-select" @bind="statusFilter">
+            <option value="">All statuses</option>
+            <option value="Draft">Draft</option>
+            <option value="Approved">Approved</option>
+            <option value="Paid">Paid</option>
+        </select>
+    </div>
+
+    <button class="fc-btn fc-btn-secondary" @onclick="ClearFilters">
+        <Icon Name="x" Size="14" /> Clear
+    </button>
+</div>
+
+<div class="fc-card">
+    <div class="fc-card-head">
+        <div>
+            <h3 class="fc-card-title">Pay runs</h3>
+            <p class="fc-card-sub">Showing @Filtered.Count of @payrolls.Count run(s)</p>
+        </div>
+    </div>
+
+    <div class="fc-card-body is-flush">
+        @if (isLoading)
+        {
+            <LoadingState AsSkeleton="true" Rows="5" />
+        }
+        else if (payrolls.Count == 0)
+        {
+            <EmptyState Title="No pay runs yet"
+                        Message="Create a pay run for an employee to calculate their gross and net pay."
+                        Icon="payroll">
+                <Action>
+                    <button class="fc-btn fc-btn-primary" @onclick="OpenCreate" disabled="@(employees.Count == 0)">
+                        <Icon Name="plus" Size="15" /> Create the first pay run
+                    </button>
+                </Action>
+            </EmptyState>
+        }
+        else if (Filtered.Count == 0)
+        {
+            <EmptyState Title="No pay runs match those filters" Icon="filter">
+                <Action>
+                    <button class="fc-btn fc-btn-secondary" @onclick="ClearFilters">Clear filters</button>
+                </Action>
+            </EmptyState>
+        }
+        else
+        {
+            <div class="fc-table-wrap">
+                <table class="fc-table">
+                    <thead>
+                        <tr>
+                            <SortableHeader State="table" Column="Employee" Label="Employee" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Column="Period" Label="Period" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Column="Basic" Label="Basic" CssClass="fc-right" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Column="Allowances" Label="Allowances" CssClass="fc-right" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Column="Overtime" Label="Overtime" CssClass="fc-right" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Column="Deductions" Label="Deductions" CssClass="fc-right" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Column="Gross" Label="Gross" CssClass="fc-right" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Column="Net" Label="Net" CssClass="fc-right" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Column="Status" Label="Status" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Label="Actions" CssClass="fc-right" />
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var run in PageRows)
+                        {
+                            <tr>
+                                <td>
+                                    <span class="fc-cell-strong">@run.EmployeeName</span>
+                                    <span class="fc-cell-sub">@run.EmployeeCode</span>
+                                </td>
+                                <td class="fc-nowrap fc-small">
+                                    @run.PeriodStart.ToString("d MMM")&ndash;@run.PeriodEnd.ToString("d MMM yyyy")
+                                </td>
+                                <td class="fc-right fc-num">@run.BasicSalary.ToString("N2")</td>
+                                <td class="fc-right fc-num">@run.Allowances.ToString("N2")</td>
+                                <td class="fc-right fc-num">
+                                    @run.OvertimePay.ToString("N2")
+                                    @if (run.OvertimeHours > 0)
+                                    {
+                                        <span class="fc-cell-sub">@run.OvertimeHours.ToString("0.##") h</span>
+                                    }
+                                </td>
+                                <td class="fc-right fc-num">@run.Deductions.ToString("N2")</td>
+                                <td class="fc-right fc-num">@run.GrossPay.ToString("N2")</td>
+                                <td class="fc-right fc-num fc-strong">@run.NetPay.ToString("N2")</td>
+                                <td>
+                                    <select class="fc-select fc-btn-sm" style="min-width:120px;"
+                                            value="@run.Status" @onchange="e => ChangeStatusAsync(run, e.Value?.ToString())">
+                                        <option value="Draft">Draft</option>
+                                        <option value="Approved">Approved</option>
+                                        <option value="Paid">Paid</option>
+                                    </select>
+                                </td>
+                                <td class="fc-right">
+                                    <span class="fc-actions">
+                                        <button class="fc-act" title="View pay run" @onclick="() => detail = run">
+                                            <Icon Name="eye" Size="14" />
+                                        </button>
+                                        <button class="fc-act" title="Edit pay run" disabled="@(run.Status == "Paid")"
+                                                @onclick="() => OpenEdit(run)">
+                                            <Icon Name="edit" Size="14" />
+                                        </button>
+                                        <button class="fc-act is-danger" title="Delete pay run"
+                                                @onclick="() => pendingDelete = run">
+                                            <Icon Name="trash" Size="14" />
+                                        </button>
+                                    </span>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                    <tfoot>
+                        <tr>
+                            <td colspan="6">Totals for the rows shown</td>
+                            <td class="fc-right fc-num">@Filtered.Sum(r => r.NetPay).ToString("N2")</td>
+                            <td colspan="2"></td>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+
+            <Pagination State="table" OnChanged="StateHasChanged" />
+        }
+    </div>
+</div>
+
+<Modal IsOpen="showEditor" Title="@(editingId is null ? "New pay run" : $"Edit pay run #{editingId}")"
+       Subtitle="Gross and net are calculated by the server, not entered here." OnClose="CloseEditor">
+    <ChildContent>
+        <Alert Message="@formError" Kind="error" />
+
+        <div class="fc-form-grid">
+            @if (editingId is null)
+            {
+                <div class="fc-field fc-span-2">
+                    <label class="fc-label" for="pr-employee">Employee<span class="fc-req">*</span></label>
+                    <select id="pr-employee" class="fc-select" @bind="selectedEmployeeId">
+                        <option value="0">Select an employee…</option>
+                        @foreach (var employee in employees)
+                        {
+                            <option value="@employee.EmployeeId">@employee.EmployeeCode - @employee.FullName</option>
+                        }
+                    </select>
+                </div>
+            }
+
+            <div class="fc-field">
+                <label class="fc-label" for="pr-start">Period start<span class="fc-req">*</span></label>
+                <input id="pr-start" type="date" class="fc-input" @bind="periodStart" />
+            </div>
+
+            <div class="fc-field">
+                <label class="fc-label" for="pr-end">Period end<span class="fc-req">*</span></label>
+                <input id="pr-end" type="date" class="fc-input" @bind="periodEnd" />
+            </div>
+
+            <div class="fc-field">
+                <label class="fc-label" for="pr-basic">
+                    Basic salary @(editingId is null ? "" : "")
+                </label>
+                <input id="pr-basic" type="number" min="0" step="0.01" class="fc-input" @bind="basicSalary" />
+                <span class="fc-hint">
+                    @(editingId is null ? "Leave blank to use the employee's default salary." : "Overrides the employee default for this run.")
+                </span>
+            </div>
+
+            <div class="fc-field">
+                <label class="fc-label" for="pr-allow">Allowances</label>
+                <input id="pr-allow" type="number" min="0" step="0.01" class="fc-input" @bind="allowances" />
+            </div>
+
+            <div class="fc-field">
+                <label class="fc-label" for="pr-deduct">Deductions</label>
+                <input id="pr-deduct" type="number" min="0" step="0.01" class="fc-input" @bind="deductions" />
+            </div>
+
+            <div class="fc-field">
+                <label class="fc-label" for="pr-ot-hours">Overtime hours</label>
+                <input id="pr-ot-hours" type="number" min="0" step="0.25" class="fc-input"
+                       @bind="overtimeHours" @bind:event="oninput" />
+                <span class="fc-hint">Leave at zero for salaried staff.</span>
+            </div>
+
+            <div class="fc-field">
+                <label class="fc-label" for="pr-ot-rate">Overtime rate per hour</label>
+                <input id="pr-ot-rate" type="number" min="0" step="0.01" class="fc-input"
+                       @bind="overtimeRate" @bind:event="oninput" />
+                @if (overtimeHours > 0 && overtimeRate <= 0)
+                {
+                    <span class="fc-error">A rate is required when overtime hours are recorded.</span>
+                }
+            </div>
+
+            <div class="fc-field fc-span-2">
+                <label class="fc-label" for="pr-notes">Notes</label>
+                <input id="pr-notes" class="fc-input" @bind="notes" />
+            </div>
+        </div>
+
+        @{
+            // A preview of what the server will calculate. The server recalculates it from the
+            // same inputs when it saves, so this can never become the figure that is paid.
+            var basic = basicSalary ?? EmployeeDefaultSalary;
+            var overtimePay = overtimeHours * overtimeRate;
+            var gross = basic + allowances + overtimePay;
+            var net = gross - deductions;
+        }
+        <div class="fc-totals fc-mt">
+            <span>Basic</span>
+            <span class="fc-num fc-right">@basic.ToString("N2")</span>
+
+            <span>Allowances</span>
+            <span class="fc-num fc-right">@allowances.ToString("N2")</span>
+
+            <span>Overtime (@overtimeHours.ToString("0.##") h)</span>
+            <span class="fc-num fc-right">@overtimePay.ToString("N2")</span>
+
+            <span>Deductions</span>
+            <span class="fc-num fc-right">-@deductions.ToString("N2")</span>
+
+            <span class="fc-strong">Gross pay</span>
+            <span class="fc-num fc-right fc-strong">@gross.ToString("N2")</span>
+
+            <span class="fc-total-row">Net pay</span>
+            <span class="fc-total-row fc-num fc-right">@net.ToString("N2")</span>
+        </div>
+    </ChildContent>
+
+    <Footer>
+        <button class="fc-btn fc-btn-secondary" @onclick="CloseEditor" disabled="@isSaving">Cancel</button>
+        <button class="fc-btn fc-btn-success" @onclick="SaveAsync" disabled="@isSaving">
+            @if (isSaving)
+            {
+                <span class="fc-spinner is-sm"></span>
+            }
+            else
+            {
+                <Icon Name="check" Size="15" />
+            }
+            @(editingId is null ? "Create pay run" : "Save changes")
+        </button>
+    </Footer>
+</Modal>
+
+<Modal IsOpen="detail is not null" Title="@(detail is null ? "" : $"{detail.EmployeeName}")"
+       Subtitle="@(detail is null ? "" : $"{detail.PeriodStart:d MMM yyyy} - {detail.PeriodEnd:d MMM yyyy}")"
+       OnClose="() => detail = null" CloseOnBackdropClick="true">
+    <ChildContent>
+        @if (detail is not null)
+        {
+            <dl class="fc-dl">
+                <dt>Employee</dt><dd>@detail.EmployeeName (@detail.EmployeeCode)</dd>
+                <dt>Position</dt><dd>@detail.Position</dd>
+                <dt>Basic salary</dt><dd class="fc-num">@detail.BasicSalary.ToString("N2")</dd>
+                <dt>Allowances</dt><dd class="fc-num">@detail.Allowances.ToString("N2")</dd>
+                <dt>Overtime</dt>
+                <dd class="fc-num">
+                    @detail.OvertimePay.ToString("N2")
+                    @if (detail.OvertimeHours > 0)
+                    {
+                        <text>(@detail.OvertimeHours.ToString("0.##") h at @detail.OvertimeRate.ToString("N2"))</text>
+                    }
+                </dd>
+                <dt>Deductions</dt><dd class="fc-num">@detail.Deductions.ToString("N2")</dd>
+                <dt>Gross pay</dt><dd class="fc-num">@detail.GrossPay.ToString("N2")</dd>
+                <dt>Net pay</dt><dd class="fc-num fc-strong">@detail.NetPay.ToString("N2")</dd>
+                <dt>Status</dt><dd><StatusBadge Status="@detail.Status" /></dd>
+                <dt>Paid on</dt><dd>@(detail.PaidDate?.ToLocalTime().ToString("d MMM yyyy") ?? "-")</dd>
+                <dt>Notes</dt><dd>@(string.IsNullOrWhiteSpace(detail.Notes) ? "-" : detail.Notes)</dd>
+            </dl>
+        }
+    </ChildContent>
+    <Footer>
+        <button class="fc-btn fc-btn-secondary" @onclick="() => detail = null">Close</button>
+    </Footer>
+</Modal>
+
+<ConfirmDialog IsOpen="pendingDelete is not null"
+               Title="Delete this pay run?"
+               Message="@($"The pay run for {pendingDelete?.EmployeeName} will be removed.")"
+               ConfirmText="Delete pay run"
+               IsBusy="isDeleting"
+               OnConfirm="ConfirmDeleteAsync"
+               OnCancel="() => pendingDelete = null" />
+
+@code {
+    private readonly List<PageHeader.Crumb> crumbs = new() { new("Small Enterprise"), new("Payroll") };
+
+    private List<PayrollDto> payrolls = new();
+    private List<EmployeeDto> employees = new();
+    private PayrollSummaryDto? summary;
+
+    private bool isLoading = true;
+    private string? pageError;
+
+    private readonly TableState<PayrollDto> table =
+        new TableState<PayrollDto>(defaultSort: "Period", descending: true)
+            .Column("Employee", p => p.EmployeeName)
+            .Column("Period", p => p.PeriodStart)
+            .Column("Basic", p => p.BasicSalary)
+            .Column("Allowances", p => p.Allowances)
+            .Column("Overtime", p => p.OvertimePay)
+            .Column("Deductions", p => p.Deductions)
+            .Column("Gross", p => p.GrossPay)
+            .Column("Net", p => p.NetPay)
+            .Column("Status", p => p.Status);
+
+    private string searchTerm = "";
+    private string statusFilter = "";
+
+    private bool showEditor;
+    private int? editingId;
+    private int selectedEmployeeId;
+    private DateTime periodStart = DateTime.Today;
+    private DateTime periodEnd = DateTime.Today;
+    private decimal? basicSalary;
+    private decimal allowances;
+    private decimal deductions;
+    private decimal overtimeHours;
+    private decimal overtimeRate;
+    private string notes = "";
+    private string? formError;
+    private bool isSaving;
+
+    private PayrollDto? detail;
+    private PayrollDto? pendingDelete;
+    private bool isDeleting;
+
+    protected override Task OnInitializedAsync() => ReloadAsync();
+
+    private async Task ReloadAsync()
+    {
+        isLoading = true;
+        pageError = null;
+
+        var employeeResult = await EmployeeApi.GetActiveAsync();
+        if (employeeResult.IsSuccess) employees = employeeResult.Value ?? new();
+
+        var result = await PayrollApi.GetAllAsync();
+
+        if (result.IsSuccess)
+        {
+            payrolls = result.Value ?? new();
+        }
+        else
+        {
+            pageError = result.ErrorMessage;
+        }
+
+        var summaryResult = await PayrollApi.GetSummaryAsync();
+        if (summaryResult.IsSuccess) summary = summaryResult.Value;
+
+        isLoading = false;
+    }
+
+    private decimal EmployeeDefaultSalary =>
+        employees.FirstOrDefault(e => e.EmployeeId == selectedEmployeeId)?.BasicSalary ?? 0m;
+
+    private List<PayrollDto> Filtered
+    {
+        get
+        {
+            IEnumerable<PayrollDto> query = payrolls;
+
+            if (!string.IsNullOrWhiteSpace(searchTerm))
+            {
+                var term = searchTerm.Trim();
+                query = query.Where(p =>
+                    p.EmployeeName.Contains(term, StringComparison.OrdinalIgnoreCase) ||
+                    p.EmployeeCode.Contains(term, StringComparison.OrdinalIgnoreCase));
+            }
+
+            if (!string.IsNullOrEmpty(statusFilter))
+                query = query.Where(p => p.Status == statusFilter);
+
+            return query.ToList();
+        }
+    }
+
+    /// <summary>The filtered pay runs, sorted and cut down to the page on screen.</summary>
+    private List<PayrollDto> PageRows => table.Apply(Filtered);
+
+    private void OnSearchInput(ChangeEventArgs args) => searchTerm = args.Value?.ToString() ?? "";
+
+    private void ClearFilters()
+    {
+        searchTerm = "";
+        statusFilter = "";
+    }
+
+    private void OpenCreate()
+    {
+        editingId = null;
+        selectedEmployeeId = 0;
+        periodStart = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
+        periodEnd = periodStart.AddMonths(1).AddDays(-1);
+        basicSalary = null;
+        allowances = 0;
+        deductions = 0;
+        overtimeHours = 0;
+        overtimeRate = 0;
+        notes = "";
+        formError = null;
+        showEditor = true;
+    }
+
+    private void OpenEdit(PayrollDto run)
+    {
+        editingId = run.PayrollId;
+        periodStart = run.PeriodStart;
+        periodEnd = run.PeriodEnd;
+        basicSalary = run.BasicSalary;
+        allowances = run.Allowances;
+        deductions = run.Deductions;
+        overtimeHours = run.OvertimeHours;
+        overtimeRate = run.OvertimeRate;
+        notes = run.Notes;
+        formError = null;
+        showEditor = true;
+    }
+
+    private void CloseEditor()
+    {
+        showEditor = false;
+        editingId = null;
+        formError = null;
+    }
+
+    private async Task SaveAsync()
+    {
+        formError = null;
+
+        if (editingId is null && selectedEmployeeId <= 0)
+        {
+            formError = "Select an employee.";
+            return;
+        }
+
+        if (periodEnd < periodStart)
+        {
+            formError = "The period end cannot be before the period start.";
+            return;
+        }
+
+        isSaving = true;
+
+        bool succeeded;
+        string? message;
+
+        if (editingId is null)
+        {
+            var result = await PayrollApi.CreateAsync(new CreatePayrollDto
+            {
+                EmployeeId = selectedEmployeeId,
+                PeriodStart = periodStart,
+                PeriodEnd = periodEnd,
+                BasicSalary = basicSalary,
+                Allowances = allowances,
+                Deductions = deductions,
+                OvertimeHours = overtimeHours,
+                OvertimeRate = overtimeRate,
+                Notes = notes
+            });
+
+            succeeded = result.IsSuccess;
+            message = result.ErrorMessage;
+        }
+        else
+        {
+            var result = await PayrollApi.UpdateAsync(editingId.Value, new UpdatePayrollDto
+            {
+                PeriodStart = periodStart,
+                PeriodEnd = periodEnd,
+                BasicSalary = basicSalary ?? 0m,
+                Allowances = allowances,
+                Deductions = deductions,
+                OvertimeHours = overtimeHours,
+                OvertimeRate = overtimeRate,
+                Notes = notes
+            });
+
+            succeeded = result.IsSuccess;
+            message = result.ErrorMessage;
+        }
+
+        isSaving = false;
+
+        if (!succeeded)
+        {
+            formError = message;
+            return;
+        }
+
+        Toasts.Success($"Pay run was {(editingId is null ? "created" : "updated")}.");
+        CloseEditor();
+        await ReloadAsync();
+    }
+
+    private async Task ChangeStatusAsync(PayrollDto run, string? status)
+    {
+        if (string.IsNullOrWhiteSpace(status) || status == run.Status) return;
+
+        var result = await PayrollApi.SetStatusAsync(run.PayrollId, new UpdatePayrollStatusDto { Status = status });
+
+        if (!result.IsSuccess)
+        {
+            pageError = result.ErrorMessage;
+            await ReloadAsync();
+            return;
+        }
+
+        Toasts.Success($"{run.EmployeeName}'s pay run marked {status}.");
+        await ReloadAsync();
+    }
+
+    private async Task ConfirmDeleteAsync()
+    {
+        if (pendingDelete is null) return;
+
+        isDeleting = true;
+        var result = await PayrollApi.DeleteAsync(pendingDelete.PayrollId);
+        isDeleting = false;
+
+        if (!result.IsSuccess)
+        {
+            pageError = result.ErrorMessage;
+            pendingDelete = null;
+            return;
+        }
+
+        Toasts.Success("The pay run was deleted.");
+        pendingDelete = null;
+        await ReloadAsync();
+    }
+}

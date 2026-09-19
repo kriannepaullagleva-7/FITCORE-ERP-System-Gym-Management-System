@@ -1,0 +1,57 @@
+@*
+    A vertical bar chart for a small number of buckets, drawn as inline SVG from real values.
+*@
+
+@if (Points is null || Points.Count == 0)
+{
+    <EmptyState Title="No data in this period" Message="@EmptyMessage" Icon="reports" />
+}
+else
+{
+    <svg class="fc-chart" viewBox="0 0 640 220" preserveAspectRatio="none" role="img" aria-label="@Title">
+        @for (var i = 0; i <= GridLines; i++)
+        {
+            var y = PadTop + (PlotH * i / (double)GridLines);
+            var value = Max - (Max * i / GridLines);
+
+            <line class="fc-chart-grid" x1="@Svg.N(PadLeft)" y1="@Svg.N(y)"
+                  x2="@Svg.N(W - PadRight)" y2="@Svg.N(y)" />
+            @Svg.Text(PadLeft - 6, y + 3, Svg.Compact(value), anchor: "end")
+        }
+
+        @for (var i = 0; i < Points.Count; i++)
+        {
+            var value = Points[i].Value;
+            var height = Math.Max((double)(value / Max) * PlotH, 0);
+            var x = PadLeft + (Slot * i) + (Slot - BarW) / 2;
+            var y = PadTop + PlotH - height;
+
+            <rect class="fc-chart-bar" x="@Svg.N(x)" y="@Svg.N(y)"
+                  width="@Svg.N(BarW)" height="@Svg.N(height)" rx="3">
+                <title>@Points[i].Label: @value.ToString("N2")</title>
+            </rect>
+            @Svg.Text(x + BarW / 2, H - 6, Points[i].Label)
+        }
+    </svg>
+}
+
+@code {
+    [Parameter] public List<TrendPointDto>? Points { get; set; }
+    [Parameter] public string Title { get; set; } = "Breakdown";
+    [Parameter] public string EmptyMessage { get; set; } = "Nothing was recorded in this date range.";
+
+    private const double W = 640;
+    private const double H = 220;
+    private const double PadLeft = 46;
+    private const double PadRight = 12;
+    private const double PadTop = 12;
+    private const double PadBottom = 26;
+    private const int GridLines = 4;
+
+    private double PlotW => W - PadLeft - PadRight;
+    private double PlotH => H - PadTop - PadBottom;
+    private double Slot => Points!.Count == 0 ? PlotW : PlotW / Points.Count;
+    private double BarW => Math.Min(52, Slot * 0.62);
+
+    private decimal Max => Svg.Ceiling(Points is { Count: > 0 } ? Points.Max(p => p.Value) : 0m);
+}

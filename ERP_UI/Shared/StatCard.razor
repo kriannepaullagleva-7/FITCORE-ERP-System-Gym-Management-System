@@ -1,0 +1,29 @@
+@*
+    One KPI tile. The value is always passed in already formatted by the page, because only
+    the page knows whether the figure is money, a count or a percentage.
+*@
+
+<div class="fc-kpi tone-@Tone">
+    @if (!string.IsNullOrWhiteSpace(Icon))
+    {
+        <div class="fc-kpi-icon"><Icon Name="@Icon" Size="19" /></div>
+    }
+    <div class="fc-kpi-body">
+        <div class="fc-kpi-label">@Label</div>
+        <div class="fc-kpi-value">@Value</div>
+        @if (!string.IsNullOrWhiteSpace(Hint))
+        {
+            <div class="fc-kpi-hint">@Hint</div>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public string Label { get; set; } = "";
+    [Parameter, EditorRequired] public string Value { get; set; } = "";
+    [Parameter] public string? Hint { get; set; }
+    [Parameter] public string? Icon { get; set; }
+
+    /// <summary>blue (default), green, amber, red or slate.</summary>
+    [Parameter] public string Tone { get; set; } = "blue";
+}

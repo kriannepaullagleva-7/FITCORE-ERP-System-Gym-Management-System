@@ -1,0 +1,693 @@
+@page "/fitcore/sales"
+@inject SaleApiService SaleApi
+@inject PaymentApiService PaymentApi
+@inject ToastService Toasts
+
+@*
+    Sales.
+
+    The payment status on each row is not stored on the sale: the server works it out from the
+    payments actually recorded against it, so a sale moves from Unpaid to Partially Paid to
+    Paid purely as a consequence of money being taken. Cancelling a sale reverses its stock and
+    refunds its payments in one transaction rather than deleting anything.
+*@
+
+<PageTitle>Sales - FitCore ERP</PageTitle>
+
+<PageHeader Title="Sales"
+            Description="Every counter transaction, what it is worth and what is still owed on it."
+            Crumbs="crumbs">
+    <Actions>
+        <button class="fc-btn fc-btn-secondary" @onclick="ReloadAsync" disabled="@isLoading">
+            <Icon Name="refresh" Size="15" /> Refresh
+        </button>
+        <a class="fc-btn fc-btn-primary" href="fitcore/pos">
+            <Icon Name="plus" Size="15" /> New sale
+        </a>
+    </Actions>
+</PageHeader>
+
+<Alert Message="@pageError" Kind="error" OnDismiss="() => pageError = null" />
+
+<div class="fc-kpi-grid">
+    <StatCard Label="Transactions" Value="@Live.Count.ToString("N0")"
+              Hint="@($"{sales.Count - Live.Count:N0} cancelled")" Icon="sales" Tone="blue" />
+    <StatCard Label="Net sales" Value="@Live.Sum(s => s.TotalAmount).ToString("N2")"
+              Hint="After discounts" Icon="money" Tone="green" />
+    <StatCard Label="Collected" Value="@Live.Sum(s => s.AmountPaid).ToString("N2")"
+              Icon="payment" Tone="green" />
+    <StatCard Label="Outstanding" Value="@Live.Sum(s => s.Balance).ToString("N2")"
+              Hint="@($"{Live.Count(s => s.PaymentStatus == "Partially Paid"):N0} partially paid")"
+              Icon="card" Tone="@(Live.Sum(s => s.Balance) > 0 ? "amber" : "green")" />
+    <StatCard Label="Average sale" Value="@AverageSale.ToString("N2")" Icon="trend-up" Tone="slate" />
+</div>
+
+<div class="fc-filters">
+    <div class="fc-filter fc-filter-grow">
+        <label class="fc-label" for="sale-search">Search</label>
+        <div class="fc-search">
+            <Icon Name="search" Size="15" />
+            <input id="sale-search" class="fc-input" placeholder="Sale ID, member or cashier"
+                   value="@searchTerm" @oninput="OnSearchInput" />
+        </div>
+    </div>
+
+    <div class="fc-filter">
+        <label class="fc-label" for="sale-from">From</label>
+        <input id="sale-from" type="date" class="fc-input" @bind="fromDate" />
+    </div>
+
+    <div class="fc-filter">
+        <label class="fc-label" for="sale-to">To</label>
+        <input id="sale-to" type="date" class="fc-input" @bind="toDate" />
+    </div>
+
+    <div class="fc-filter">
+        <label class="fc-label" for="sale-status">Sale status</label>
+        <select id="sale-status" class="fc-select" @bind="statusFilter">
+            <option value="">All</option>
+            <option value="Completed">Completed</option>
+            <option value="Cancelled">Cancelled</option>
+        </select>
+    </div>
+
+    <div class="fc-filter">
+        <label class="fc-label" for="sale-payment">Payment</label>
+        <select id="sale-payment" class="fc-select" @bind="paymentFilter">
+            <option value="">All</option>
+            <option value="Paid">Paid</option>
+            <option value="Partially Paid">Partially paid</option>
+            <option value="Unpaid">Unpaid</option>
+        </select>
+    </div>
+
+    <button class="fc-btn fc-btn-secondary" @onclick="ApplyDateRangeAsync">
+        <Icon Name="filter" Size="14" /> Apply dates
+    </button>
+    <button class="fc-btn fc-btn-secondary" @onclick="ClearFiltersAsync">
+        <Icon Name="x" Size="14" /> Clear
+    </button>
+</div>
+
+<div class="fc-card">
+    <div class="fc-card-head">
+        <div>
+            <h3 class="fc-card-title">Transactions</h3>
+            <p class="fc-card-sub">
+                Showing @Filtered.Count of @sales.Count sale(s)
+                @if (fromDate.HasValue || toDate.HasValue)
+                {
+                    <text>&middot; date range applied on the server</text>
+                }
+            </p>
+        </div>
+    </div>
+
+    <div class="fc-card-body is-flush">
+        @if (isLoading)
+        {
+            <LoadingState AsSkeleton="true" Rows="6" />
+        }
+        else if (sales.Count == 0)
+        {
+            <EmptyState Title="No sales recorded"
+                        Message="Ring up your first sale at the counter. Stock is deducted and the balance is tracked automatically."
+                        Icon="sales">
+                <Action>
+                    <a class="fc-btn fc-btn-primary" href="fitcore/pos">
+                        <Icon Name="plus" Size="15" /> Open the till
+                    </a>
+                </Action>
+            </EmptyState>
+        }
+        else if (Filtered.Count == 0)
+        {
+            <EmptyState Title="No sales match those filters" Icon="filter">
+                <Action>
+                    <button class="fc-btn fc-btn-secondary" @onclick="ClearFiltersAsync">Clear filters</button>
+                </Action>
+            </EmptyState>
+        }
+        else
+        {
+            <div class="fc-table-wrap">
+                <table class="fc-table">
+                    <thead>
+                        <tr>
+                            <SortableHeader State="table" Column="Sale" Label="Sale" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Column="Date" Label="Date" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Column="Member" Label="Member" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Column="Items" Label="Items" CssClass="fc-right" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Column="Subtotal" Label="Subtotal" CssClass="fc-right" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Column="Discount" Label="Discount" CssClass="fc-right" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Column="Total" Label="Total" CssClass="fc-right" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Column="Paid" Label="Paid" CssClass="fc-right" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Column="Balance" Label="Balance" CssClass="fc-right" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Column="Payment" Label="Payment" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Column="Cashier" Label="Cashier" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Label="Actions" CssClass="fc-right" />
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var sale in PageRows)
+                        {
+                            <tr class="@(sale.Status == "Cancelled" ? "is-muted" : "")">
+                                <td class="fc-id">
+                                    #@sale.SaleId
+                                    @if (sale.Status == "Cancelled")
+                                    {
+                                        <span class="fc-cell-sub"><StatusBadge Status="Cancelled" /></span>
+                                    }
+                                </td>
+                                <td class="fc-nowrap fc-small">@sale.SaleDate.ToLocalTime().ToString("d MMM yyyy HH:mm")</td>
+                                <td>
+                                    <span class="fc-cell-strong">@sale.MemberName</span>
+                                    <span class="fc-cell-sub">#@sale.MemberId</span>
+                                </td>
+                                <td class="fc-right fc-num">
+                                    @sale.ItemCount
+                                    <span class="fc-cell-sub">@sale.TotalQuantity unit(s)</span>
+                                </td>
+                                <td class="fc-right fc-num">@sale.Subtotal.ToString("N2")</td>
+                                <td class="fc-right fc-num">
+                                    @(sale.Discount > 0 ? sale.Discount.ToString("N2") : "-")
+                                </td>
+                                <td class="fc-right fc-num fc-strong">@sale.TotalAmount.ToString("N2")</td>
+                                <td class="fc-right fc-num">@sale.AmountPaid.ToString("N2")</td>
+                                <td class="fc-right fc-num @(sale.Balance > 0 && sale.Status != "Cancelled" ? "fc-neg fc-strong" : "fc-muted")">
+                                    @sale.Balance.ToString("N2")
+                                </td>
+                                <td><StatusBadge Status="@sale.PaymentStatus" /></td>
+                                <td class="fc-small">@sale.CashierName</td>
+                                <td class="fc-right">
+                                    <span class="fc-actions">
+                                        <button class="fc-act" title="View sale" @onclick="() => OpenDetailAsync(sale.SaleId)">
+                                            <Icon Name="eye" Size="14" />
+                                        </button>
+                                        <button class="fc-act" title="Record a payment for this sale"
+                                                disabled="@(sale.Status == "Cancelled" || sale.Balance <= 0)"
+                                                @onclick="() => OpenPayment(sale)">
+                                            <Icon Name="payment" Size="14" />
+                                        </button>
+                                        <button class="fc-act is-danger" title="Cancel sale"
+                                                disabled="@(sale.Status == "Cancelled")"
+                                                @onclick="() => AskCancel(sale)">
+                                            <Icon Name="ban" Size="14" />
+                                        </button>
+                                    </span>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                    <tfoot>
+                        <tr>
+                            <td colspan="6">Totals for the rows shown (cancelled sales excluded)</td>
+                            <td class="fc-right fc-num">@Filtered.Where(s => s.Status != "Cancelled").Sum(s => s.TotalAmount).ToString("N2")</td>
+                            <td class="fc-right fc-num">@Filtered.Where(s => s.Status != "Cancelled").Sum(s => s.AmountPaid).ToString("N2")</td>
+                            <td class="fc-right fc-num">@Filtered.Where(s => s.Status != "Cancelled").Sum(s => s.Balance).ToString("N2")</td>
+                            <td colspan="3"></td>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+
+            <Pagination State="table" OnChanged="StateHasChanged" />
+        }
+    </div>
+</div>
+
+<!-- ------------------------------------------------------------------ Sale detail -->
+
+<Modal IsOpen="detail is not null" Title="@($"Sale #{detail?.Sale.SaleId}")"
+       Subtitle="@detail?.Sale.MemberName" Size="wide"
+       OnClose="() => detail = null" CloseOnBackdropClick="true">
+    <ChildContent>
+        @if (isLoadingDetail)
+        {
+            <LoadingState Message="Reading the sale…" />
+        }
+        else if (detail is not null)
+        {
+            <div class="fc-grid fc-grid-2 fc-mb">
+                <dl class="fc-dl">
+                    <dt>Date</dt><dd>@detail.Sale.SaleDate.ToLocalTime().ToString("d MMMM yyyy, HH:mm")</dd>
+                    <dt>Member</dt><dd>@detail.Sale.MemberName (#@detail.Sale.MemberId)</dd>
+                    <dt>Cashier</dt><dd>@detail.Sale.CashierName</dd>
+                    <dt>Status</dt><dd><StatusBadge Status="@detail.Sale.Status" /></dd>
+                </dl>
+
+                <dl class="fc-dl">
+                    <dt>Subtotal</dt><dd class="fc-num">@detail.Sale.Subtotal.ToString("N2")</dd>
+                    <dt>Discount</dt><dd class="fc-num">@detail.Sale.Discount.ToString("N2")</dd>
+                    <dt>Total</dt><dd class="fc-num fc-strong">@detail.Sale.TotalAmount.ToString("N2")</dd>
+                    <dt>Paid</dt><dd class="fc-num">@detail.Sale.AmountPaid.ToString("N2")</dd>
+                    <dt>Balance</dt>
+                    <dd class="fc-num @(detail.Sale.Balance > 0 ? "fc-neg" : "fc-pos")">
+                        @detail.Sale.Balance.ToString("N2")
+                    </dd>
+                    <dt>Payment</dt><dd><StatusBadge Status="@detail.Sale.PaymentStatus" /></dd>
+                </dl>
+            </div>
+
+            @if (!string.IsNullOrWhiteSpace(detail.Sale.Notes))
+            {
+                <div class="fc-alert fc-alert-info">
+                    <Icon Name="info" Size="16" />
+                    <div class="fc-alert-body">@detail.Sale.Notes</div>
+                </div>
+            }
+
+            <h4>Items</h4>
+            <div class="fc-table-wrap fc-mb">
+                <table class="fc-table">
+                    <thead>
+                        <tr>
+                            <th>SKU</th>
+                            <th>Product</th>
+                            <th class="fc-right">Qty</th>
+                            <th class="fc-right">Unit price</th>
+                            <th class="fc-right">Line total</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var line in detail.Lines)
+                        {
+                            <tr>
+                                <td class="fc-id">@line.ProductCode</td>
+                                <td>@line.ProductName</td>
+                                <td class="fc-right fc-num">@line.Quantity</td>
+                                <td class="fc-right fc-num">@line.UnitPrice.ToString("N2")</td>
+                                <td class="fc-right fc-num fc-strong">@line.Subtotal.ToString("N2")</td>
+                            </tr>
+                        }
+                    </tbody>
+                    <tfoot>
+                        <tr>
+                            <td colspan="4">Subtotal</td>
+                            <td class="fc-right fc-num">@detail.Sale.Subtotal.ToString("N2")</td>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+
+            <h4>Payments against this sale</h4>
+            @if (detail.Payments.Count == 0)
+            {
+                <EmptyState Title="No payments recorded yet"
+                            Message="This sale is still fully outstanding."
+                            Icon="payment" />
+            }
+            else
+            {
+                <div class="fc-table-wrap">
+                    <table class="fc-table">
+                        <thead>
+                            <tr>
+                                <th>Payment</th>
+                                <th>Date</th>
+                                <th>Method</th>
+                                <th>Reference</th>
+                                <th>Status</th>
+                                <th class="fc-right">Amount</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var payment in detail.Payments)
+                            {
+                                <tr>
+                                    <td class="fc-id">#@payment.PaymentId</td>
+                                    <td class="fc-small fc-nowrap">@payment.PaymentDate.ToLocalTime().ToString("d MMM HH:mm")</td>
+                                    <td>@payment.Method</td>
+                                    <td class="fc-id">@(string.IsNullOrWhiteSpace(payment.ReferenceNo) ? "-" : payment.ReferenceNo)</td>
+                                    <td><StatusBadge Status="@payment.Status" /></td>
+                                    <td class="fc-right fc-num fc-strong">@payment.Amount.ToString("N2")</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        }
+    </ChildContent>
+
+    <Footer>
+        <button class="fc-btn fc-btn-secondary" @onclick="() => detail = null">Close</button>
+        @if (detail is not null && detail.Sale.Status != "Cancelled" && detail.Sale.Balance > 0)
+        {
+            <button class="fc-btn fc-btn-primary" @onclick="() => OpenPayment(detail.Sale)">
+                <Icon Name="payment" Size="15" /> Record payment
+            </button>
+        }
+    </Footer>
+</Modal>
+
+<!-- ------------------------------------------------------------------ Take payment -->
+
+<Modal IsOpen="paymentTarget is not null" Title="@($"Payment for sale #{paymentTarget?.SaleId}")"
+       Subtitle="@paymentTarget?.MemberName" OnClose="() => paymentTarget = null">
+    <ChildContent>
+        <Alert Message="@formError" Kind="error" />
+
+        @if (paymentTarget is not null)
+        {
+            <div class="fc-alert fc-alert-info">
+                <Icon Name="info" Size="16" />
+                <div class="fc-alert-body">
+                    Sale total <strong class="fc-num">@paymentTarget.TotalAmount.ToString("N2")</strong>,
+                    already paid <strong class="fc-num">@paymentTarget.AmountPaid.ToString("N2")</strong>,
+                    outstanding <strong class="fc-num">@paymentTarget.Balance.ToString("N2")</strong>.
+                </div>
+            </div>
+
+            <div class="fc-form-grid">
+                <div class="fc-field">
+                    <label class="fc-label" for="pay-amount">Amount<span class="fc-req">*</span></label>
+                    <input id="pay-amount" type="number" min="0.01" step="0.01" class="fc-input"
+                           @bind="paymentAmount" />
+                    <span class="fc-hint">
+                        The server refuses more than the sale still owes.
+                    </span>
+                </div>
+
+                <div class="fc-field">
+                    <label class="fc-label" for="pay-method">Method</label>
+                    <select id="pay-method" class="fc-select" @bind="paymentMethod">
+                        <option value="Cash">Cash</option>
+                        <option value="Card">Card</option>
+                        <option value="Transfer">Transfer</option>
+                        <option value="Check">Check</option>
+                        <option value="GCash">GCash</option>
+                    </select>
+                </div>
+
+                <div class="fc-field">
+                    <label class="fc-label" for="pay-ref">Reference number</label>
+                    <input id="pay-ref" class="fc-input" @bind="paymentReference"
+                           placeholder="Receipt or transaction number" />
+                </div>
+
+                <div class="fc-field">
+                    <label class="fc-label" for="pay-date">Payment date</label>
+                    <input id="pay-date" type="date" class="fc-input" @bind="paymentDate" />
+                </div>
+
+                <div class="fc-field fc-span-2">
+                    <label class="fc-label" for="pay-notes">Notes</label>
+                    <input id="pay-notes" class="fc-input" @bind="paymentNotes" />
+                </div>
+            </div>
+
+            <div class="fc-row">
+                <button class="fc-btn fc-btn-secondary fc-btn-sm" @onclick="PayFullBalance">
+                    Pay the full balance (@paymentTarget.Balance.ToString("N2"))
+                </button>
+            </div>
+
+            @if (paymentAmount > 0 && paymentAmount < paymentTarget.Balance)
+            {
+                <div class="fc-alert fc-alert-warning fc-mt">
+                    <Icon Name="alert" Size="16" />
+                    <div class="fc-alert-body">
+                        This sale will remain <strong>Partially Paid</strong> with
+                        <strong class="fc-num">@((paymentTarget.Balance - paymentAmount).ToString("N2"))</strong>
+                        still outstanding.
+                    </div>
+                </div>
+            }
+        }
+    </ChildContent>
+
+    <Footer>
+        <button class="fc-btn fc-btn-secondary" @onclick="() => paymentTarget = null" disabled="@isSaving">Cancel</button>
+        <button class="fc-btn fc-btn-success" @onclick="SavePaymentAsync" disabled="@isSaving">
+            @if (isSaving)
+            {
+                <span class="fc-spinner is-sm"></span>
+            }
+            else
+            {
+                <Icon Name="check" Size="15" />
+            }
+            Record payment
+        </button>
+    </Footer>
+</Modal>
+
+<!-- ------------------------------------------------------------------ Cancel sale -->
+
+<ConfirmDialog IsOpen="pendingCancel is not null"
+               Title="Cancel this sale?"
+               Message="@($"Sale #{pendingCancel?.SaleId} for {pendingCancel?.MemberName} will be reversed.")"
+               Warning="Stock goes back onto the shelf and any settled payments are marked refunded. The sale itself is kept for audit."
+               ConfirmText="Cancel the sale"
+               IsBusy="isSaving"
+               OnConfirm="ConfirmCancelAsync"
+               OnCancel="() => pendingCancel = null">
+    <Extra>
+        <div class="fc-field">
+            <label class="fc-label" for="cancel-reason">Reason</label>
+            <input id="cancel-reason" class="fc-input" @bind="cancelReason"
+                   placeholder="e.g. customer changed their mind" />
+        </div>
+    </Extra>
+</ConfirmDialog>
+
+@code {
+    private readonly List<PageHeader.Crumb> crumbs = new() { new("Operations"), new("Sales") };
+
+    private List<SaleViewDto> sales = new();
+    private bool isLoading = true;
+    private string? pageError;
+
+    // The server already returns sales newest first; this keeps that as the default while
+    // letting any column be sorted on.
+    private readonly TableState<SaleViewDto> table =
+        new TableState<SaleViewDto>(defaultSort: "Date", descending: true)
+            .Column("Sale", s => s.SaleId)
+            .Column("Date", s => s.SaleDate)
+            .Column("Member", s => s.MemberName)
+            .Column("Items", s => s.ItemCount)
+            .Column("Subtotal", s => s.Subtotal)
+            .Column("Discount", s => s.Discount)
+            .Column("Total", s => s.TotalAmount)
+            .Column("Paid", s => s.AmountPaid)
+            .Column("Balance", s => s.Balance)
+            .Column("Payment", s => s.PaymentStatus)
+            .Column("Cashier", s => s.CashierName);
+
+    private string searchTerm = "";
+    private string statusFilter = "";
+    private string paymentFilter = "";
+    private DateTime? fromDate;
+    private DateTime? toDate;
+
+    private SaleDetailDto? detail;
+    private bool isLoadingDetail;
+
+    private SaleViewDto? paymentTarget;
+    private decimal paymentAmount;
+    private string paymentMethod = "Cash";
+    private string paymentReference = "";
+    private string paymentNotes = "";
+    private DateTime paymentDate = DateTime.Today;
+
+    private SaleViewDto? pendingCancel;
+    private string cancelReason = "";
+
+    private string? formError;
+    private bool isSaving;
+
+    protected override Task OnInitializedAsync() => ReloadAsync();
+
+    private async Task ReloadAsync()
+    {
+        isLoading = true;
+        pageError = null;
+
+        // The date range goes to the server, so a long sales history is narrowed in SQL
+        // rather than being shipped to the browser and filtered here.
+        var result = await SaleApi.GetAllAsync(fromDate, toDate);
+
+        if (result.IsSuccess)
+        {
+            sales = result.Value ?? new();
+        }
+        else
+        {
+            pageError = result.ErrorMessage;
+        }
+
+        isLoading = false;
+    }
+
+    private List<SaleViewDto> Live => sales.Where(s => s.Status != "Cancelled").ToList();
+
+    private decimal AverageSale
+    {
+        get
+        {
+            var live = Live;
+            return live.Count == 0 ? 0m : live.Sum(s => s.TotalAmount) / live.Count;
+        }
+    }
+
+    private List<SaleViewDto> Filtered
+    {
+        get
+        {
+            IEnumerable<SaleViewDto> query = sales;
+
+            if (!string.IsNullOrWhiteSpace(searchTerm))
+            {
+                var term = searchTerm.Trim();
+                query = query.Where(s =>
+                    s.MemberName.Contains(term, StringComparison.OrdinalIgnoreCase) ||
+                    s.CashierName.Contains(term, StringComparison.OrdinalIgnoreCase) ||
+                    s.SaleId.ToString() == term.TrimStart('#'));
+            }
+
+            if (!string.IsNullOrEmpty(statusFilter))
+                query = query.Where(s => s.Status == statusFilter);
+
+            if (!string.IsNullOrEmpty(paymentFilter))
+                query = query.Where(s => s.PaymentStatus == paymentFilter);
+
+            return query.ToList();
+        }
+    }
+
+    /// <summary>The filtered sales, sorted and cut down to the page on screen.</summary>
+    private List<SaleViewDto> PageRows => table.Apply(Filtered);
+
+    private void OnSearchInput(ChangeEventArgs args) => searchTerm = args.Value?.ToString() ?? "";
+
+    private Task ApplyDateRangeAsync() => ReloadAsync();
+
+    private Task ClearFiltersAsync()
+    {
+        searchTerm = "";
+        statusFilter = "";
+        paymentFilter = "";
+        fromDate = null;
+        toDate = null;
+        return ReloadAsync();
+    }
+
+    private async Task OpenDetailAsync(int saleId)
+    {
+        isLoadingDetail = true;
+        detail = new SaleDetailDto { Sale = new SaleViewDto { SaleId = saleId } };
+
+        var result = await SaleApi.GetDetailAsync(saleId);
+
+        if (result.IsSuccess && result.Value is not null)
+        {
+            detail = result.Value;
+        }
+        else
+        {
+            detail = null;
+            pageError = result.ErrorMessage ?? "That sale could not be loaded.";
+        }
+
+        isLoadingDetail = false;
+    }
+
+    private void OpenPayment(SaleViewDto sale)
+    {
+        paymentTarget = sale;
+        paymentAmount = sale.Balance;
+        paymentMethod = "Cash";
+        paymentReference = "";
+        paymentNotes = "";
+        paymentDate = DateTime.Today;
+        formError = null;
+        detail = null;
+    }
+
+    private void PayFullBalance()
+    {
+        if (paymentTarget is not null) paymentAmount = paymentTarget.Balance;
+    }
+
+    private async Task SavePaymentAsync()
+    {
+        if (paymentTarget is null) return;
+
+        formError = null;
+
+        if (paymentAmount <= 0)
+        {
+            formError = "Enter an amount greater than zero.";
+            return;
+        }
+
+        if (paymentAmount > paymentTarget.Balance)
+        {
+            formError = $"That is more than the {paymentTarget.Balance:N2} still owed on this sale.";
+            return;
+        }
+
+        isSaving = true;
+
+        var result = await PaymentApi.RecordAsync(new RecordPaymentDto
+        {
+            MemberId = paymentTarget.MemberId,
+            SaleId = paymentTarget.SaleId,
+            Amount = paymentAmount,
+            PaymentDate = paymentDate,
+            Method = paymentMethod,
+            ReferenceNo = paymentReference,
+            Status = "Completed",
+            Notes = paymentNotes
+        });
+
+        isSaving = false;
+
+        if (!result.IsSuccess)
+        {
+            formError = result.ErrorMessage;
+            return;
+        }
+
+        var remaining = paymentTarget.Balance - paymentAmount;
+
+        Toasts.Success(remaining <= 0
+            ? $"Sale #{paymentTarget.SaleId} is now fully paid."
+            : $"{paymentAmount:N2} recorded. {remaining:N2} still outstanding.");
+
+        paymentTarget = null;
+        await ReloadAsync();
+    }
+
+    private void AskCancel(SaleViewDto sale)
+    {
+        pendingCancel = sale;
+        cancelReason = "";
+    }
+
+    private async Task ConfirmCancelAsync()
+    {
+        if (pendingCancel is null) return;
+
+        isSaving = true;
+
+        var result = await SaleApi.CancelAsync(
+            pendingCancel.SaleId, new CancelSaleDto { Reason = cancelReason });
+
+        isSaving = false;
+
+        if (!result.IsSuccess)
+        {
+            pageError = result.ErrorMessage;
+            pendingCancel = null;
+            return;
+        }
+
+        Toasts.Success(
+            $"Sale #{pendingCancel.SaleId} was cancelled and its stock returned.", "Sale reversed");
+
+        pendingCancel = null;
+        await ReloadAsync();
+    }
+}

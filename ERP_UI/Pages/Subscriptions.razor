@@ -1,0 +1,508 @@
+@page "/fitcore/subscriptions"
+@inject ReportsApiService ReportsApi
+@inject SubscriptionApiService SubscriptionApi
+@inject MemberApiService MemberApi
+@inject MembershipPlanApiService PlanApi
+@inject ToastService Toasts
+
+@*
+    Subscriptions: which member is on which plan, until when, and how much of it they have
+    paid for. The expiry state is calculated by the server from the actual dates, so a
+    membership that lapsed overnight shows as expired without anyone touching a button.
+*@
+
+<PageTitle>Subscriptions - FitCore ERP</PageTitle>
+
+<PageHeader Title="Subscriptions"
+            Description="Every membership sold, its expiry and its outstanding balance."
+            Crumbs="crumbs">
+    <Actions>
+        <button class="fc-btn fc-btn-secondary" @onclick="ExpireOverdueAsync" disabled="@isBusy">
+            <Icon Name="refresh" Size="15" /> Expire overdue
+        </button>
+        <button class="fc-btn fc-btn-primary" @onclick="OpenCreate">
+            <Icon Name="plus" Size="15" /> New subscription
+        </button>
+    </Actions>
+</PageHeader>
+
+<Alert Message="@pageError" Kind="error" OnDismiss="() => pageError = null" />
+
+<div class="fc-kpi-grid">
+    <StatCard Label="Active" Value="@rows.Count(r => r.MembershipStatus == "Active").ToString("N0")"
+              Icon="check" Tone="green" />
+    <StatCard Label="Expiring soon" Value="@rows.Count(r => r.MembershipStatus == "Expiring Soon").ToString("N0")"
+              Hint="Within 14 days" Icon="alert" Tone="amber" />
+    <StatCard Label="Expired" Value="@rows.Count(r => r.MembershipStatus == "Expired").ToString("N0")"
+              Icon="ban" Tone="red" />
+    <StatCard Label="Collected" Value="@rows.Sum(r => r.AmountPaid).ToString("N2")"
+              Hint="Membership revenue received" Icon="money" Tone="blue" />
+    <StatCard Label="Outstanding" Value="@rows.Sum(r => r.Balance).ToString("N2")"
+              Hint="Still owed on memberships" Icon="card"
+              Tone="@(rows.Sum(r => r.Balance) > 0 ? "amber" : "green")" />
+</div>
+
+<div class="fc-filters">
+    <div class="fc-filter fc-filter-grow">
+        <label class="fc-label" for="sub-search">Search</label>
+        <div class="fc-search">
+            <Icon Name="search" Size="15" />
+            <input id="sub-search" class="fc-input" placeholder="Member name or plan"
+                   value="@searchTerm" @oninput="OnSearchInput" />
+        </div>
+    </div>
+
+    <div class="fc-filter">
+        <label class="fc-label" for="sub-status">Membership status</label>
+        <select id="sub-status" class="fc-select" @bind="statusFilter">
+            <option value="">All statuses</option>
+            <option value="Active">Active</option>
+            <option value="Expiring Soon">Expiring soon</option>
+            <option value="Expired">Expired</option>
+            <option value="Cancelled">Cancelled</option>
+            <option value="No Plan">No plan</option>
+        </select>
+    </div>
+
+    <div class="fc-filter">
+        <label class="fc-label" for="sub-payment">Payment status</label>
+        <select id="sub-payment" class="fc-select" @bind="paymentFilter">
+            <option value="">All</option>
+            <option value="Paid">Paid</option>
+            <option value="Partially Paid">Partially paid</option>
+            <option value="Unpaid">Unpaid</option>
+        </select>
+    </div>
+
+    <div class="fc-filter">
+        <label class="fc-label" for="sub-plan">Plan</label>
+        <select id="sub-plan" class="fc-select" @bind="planFilter">
+            <option value="">All plans</option>
+            @foreach (var plan in rows.Select(r => r.PlanName).Distinct().OrderBy(p => p))
+            {
+                <option value="@plan">@plan</option>
+            }
+        </select>
+    </div>
+
+    <button class="fc-btn fc-btn-secondary" @onclick="ClearFilters">
+        <Icon Name="x" Size="14" /> Clear
+    </button>
+</div>
+
+<div class="fc-card">
+    <div class="fc-card-head">
+        <div>
+            <h3 class="fc-card-title">Memberships</h3>
+            <p class="fc-card-sub">Showing @Filtered.Count of @rows.Count record(s)</p>
+        </div>
+    </div>
+
+    <div class="fc-card-body is-flush">
+        @if (isLoading)
+        {
+            <LoadingState AsSkeleton="true" Rows="6" />
+        }
+        else if (rows.Count == 0)
+        {
+            <EmptyState Title="No subscriptions yet"
+                        Message="Put a member on a plan to create their first membership."
+                        Icon="subscription">
+                <Action>
+                    <button class="fc-btn fc-btn-primary" @onclick="OpenCreate">
+                        <Icon Name="plus" Size="15" /> Create a subscription
+                    </button>
+                </Action>
+            </EmptyState>
+        }
+        else if (Filtered.Count == 0)
+        {
+            <EmptyState Title="Nothing matches those filters" Icon="filter">
+                <Action>
+                    <button class="fc-btn fc-btn-secondary" @onclick="ClearFilters">Clear filters</button>
+                </Action>
+            </EmptyState>
+        }
+        else
+        {
+            <div class="fc-table-wrap">
+                <table class="fc-table">
+                    <thead>
+                        <tr>
+                            <SortableHeader State="table" Column="Member" Label="Member" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Column="Plan" Label="Plan" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Column="Starts" Label="Starts" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Column="Expires" Label="Expires" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Column="Remaining" Label="Remaining" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Column="Status" Label="Status" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Column="Price" Label="Price" CssClass="fc-right" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Column="Paid" Label="Paid" CssClass="fc-right" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Column="Balance" Label="Balance" CssClass="fc-right" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Column="Payment" Label="Payment" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Label="Actions" CssClass="fc-right" />
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var row in PageRows)
+                        {
+                            <tr>
+                                <td>
+                                    <span class="fc-cell-strong">@row.FullName</span>
+                                    <span class="fc-cell-sub">#@row.MemberId</span>
+                                </td>
+                                <td>@row.PlanName</td>
+                                <td class="fc-nowrap fc-small">@(row.StartDate?.ToLocalTime().ToString("d MMM yyyy") ?? "-")</td>
+                                <td class="fc-nowrap fc-small">@(row.ExpiryDate?.ToLocalTime().ToString("d MMM yyyy") ?? "-")</td>
+                                <td class="fc-nowrap fc-small">
+                                    @if (row.DaysRemaining.HasValue)
+                                    {
+                                        <span class="@(row.DaysRemaining.Value < 0 ? "fc-neg" : "")">
+                                            @(row.DaysRemaining.Value < 0
+                                                ? $"{Math.Abs(row.DaysRemaining.Value)} day(s) ago"
+                                                : $"{row.DaysRemaining.Value} day(s)")
+                                        </span>
+                                    }
+                                    else
+                                    {
+                                        <span class="fc-muted">-</span>
+                                    }
+                                </td>
+                                <td><StatusBadge Status="@row.MembershipStatus" /></td>
+                                <td class="fc-right fc-num">@row.PlanPrice.ToString("N2")</td>
+                                <td class="fc-right fc-num">@row.AmountPaid.ToString("N2")</td>
+                                <td class="fc-right fc-num @(row.Balance > 0 ? "fc-neg fc-strong" : "fc-muted")">
+                                    @row.Balance.ToString("N2")
+                                </td>
+                                <td><StatusBadge Status="@row.PaymentStatus" /></td>
+                                <td class="fc-right">
+                                    <span class="fc-actions">
+                                        <button class="fc-act" title="Renew membership"
+                                                disabled="@(row.SubscriptionId is null)"
+                                                @onclick="() => AskRenew(row)">
+                                            <Icon Name="refresh" Size="14" />
+                                        </button>
+                                        <button class="fc-act is-danger" title="Cancel membership"
+                                                disabled="@(row.SubscriptionId is null || row.MembershipStatus == "Cancelled")"
+                                                @onclick="() => AskCancel(row)">
+                                            <Icon Name="ban" Size="14" />
+                                        </button>
+                                    </span>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            <Pagination State="table" OnChanged="StateHasChanged" />
+        }
+    </div>
+</div>
+
+<!-- ------------------------------------------------------------------ New subscription -->
+
+<Modal IsOpen="showEditor" Title="New subscription"
+       Subtitle="Puts a member on a plan and sets the expiry from the plan duration."
+       OnClose="() => showEditor = false">
+    <ChildContent>
+        <Alert Message="@formError" Kind="error" />
+
+        <div class="fc-field">
+            <label class="fc-label" for="new-member">Member<span class="fc-req">*</span></label>
+            <select id="new-member" class="fc-select" @bind="form.MemberId">
+                <option value="0">Select a member…</option>
+                @foreach (var member in members.OrderBy(m => m.FirstName))
+                {
+                    <option value="@member.MemberId">@member.FirstName @member.LastName (#@member.MemberId)</option>
+                }
+            </select>
+        </div>
+
+        <div class="fc-field">
+            <label class="fc-label" for="new-plan">Plan<span class="fc-req">*</span></label>
+            <select id="new-plan" class="fc-select" @bind="form.PlanId">
+                <option value="0">Select a plan…</option>
+                @foreach (var plan in activePlans)
+                {
+                    <option value="@plan.PlanId">@plan.PlanName - @plan.Price.ToString("N2") (@plan.DurationMonths mo)</option>
+                }
+            </select>
+            @if (activePlans.Count == 0)
+            {
+                <span class="fc-error">There are no active plans. Create one first.</span>
+            }
+        </div>
+
+        <div class="fc-field">
+            <label class="fc-label" for="new-start">Start date</label>
+            <input id="new-start" type="date" class="fc-input" @bind="startDate" />
+            <span class="fc-hint">Leave as today unless the membership is backdated.</span>
+        </div>
+
+        @if (SelectedPlan is not null)
+        {
+            <div class="fc-alert fc-alert-info">
+                <Icon Name="info" Size="16" />
+                <div class="fc-alert-body">
+                    This membership will run to
+                    <strong>@startDate.AddMonths(SelectedPlan.DurationMonths).ToString("d MMM yyyy")</strong>
+                    and will owe <strong class="fc-num">@SelectedPlan.Price.ToString("N2")</strong>
+                    until a payment is recorded against it.
+                </div>
+            </div>
+        }
+    </ChildContent>
+
+    <Footer>
+        <button class="fc-btn fc-btn-secondary" @onclick="() => showEditor = false" disabled="@isSaving">Cancel</button>
+        <button class="fc-btn fc-btn-success" @onclick="SaveAsync" disabled="@isSaving">
+            @if (isSaving)
+            {
+                <span class="fc-spinner is-sm"></span>
+            }
+            else
+            {
+                <Icon Name="check" Size="15" />
+            }
+            Create subscription
+        </button>
+    </Footer>
+</Modal>
+
+<ConfirmDialog IsOpen="pendingRenew is not null"
+               Title="Renew this membership?"
+               Message="@($"{pendingRenew?.FullName}'s membership will be extended by the plan duration from its current end date.")"
+               ConfirmText="Renew membership"
+               IsDestructive="false"
+               IsBusy="isBusy"
+               OnConfirm="ConfirmRenewAsync"
+               OnCancel="() => pendingRenew = null" />
+
+<ConfirmDialog IsOpen="pendingCancel is not null"
+               Title="Cancel this membership?"
+               Message="@($"{pendingCancel?.FullName}'s membership will be marked cancelled.")"
+               Warning="The record is kept, along with any payments already recorded against it."
+               ConfirmText="Cancel membership"
+               IsBusy="isBusy"
+               OnConfirm="ConfirmCancelAsync"
+               OnCancel="() => pendingCancel = null" />
+
+@code {
+    private readonly List<PageHeader.Crumb> crumbs = new() { new("Membership"), new("Subscriptions") };
+
+    private List<MembershipOverviewDto> rows = new();
+    private List<MemberDto> members = new();
+    private List<MembershipPlanDto> activePlans = new();
+
+    private bool isLoading = true;
+    private bool isBusy;
+    private string? pageError;
+
+    // Soonest to expire first, which is the order this list is most useful in.
+    private readonly TableState<MembershipOverviewDto> table =
+        new TableState<MembershipOverviewDto>(defaultSort: "Expires")
+            .Column("Member", r => r.FullName)
+            .Column("Plan", r => r.PlanName)
+            .Column("Starts", r => r.StartDate ?? DateTime.MaxValue)
+            .Column("Expires", r => r.ExpiryDate ?? DateTime.MaxValue)
+            .Column("Remaining", r => r.DaysRemaining ?? int.MaxValue)
+            .Column("Status", r => r.MembershipStatus)
+            .Column("Price", r => r.PlanPrice)
+            .Column("Paid", r => r.AmountPaid)
+            .Column("Balance", r => r.Balance)
+            .Column("Payment", r => r.PaymentStatus);
+
+    private string searchTerm = "";
+    private string statusFilter = "";
+    private string paymentFilter = "";
+    private string planFilter = "";
+
+    private bool showEditor;
+    private CreateSubscriptionDto form = new();
+    private DateTime startDate = DateTime.Today;
+    private string? formError;
+    private bool isSaving;
+
+    private MembershipOverviewDto? pendingRenew;
+    private MembershipOverviewDto? pendingCancel;
+
+    protected override Task OnInitializedAsync() => ReloadAsync();
+
+    private async Task ReloadAsync()
+    {
+        isLoading = true;
+        pageError = null;
+
+        var result = await ReportsApi.GetMembershipOverviewAsync();
+
+        if (result.IsSuccess)
+        {
+            rows = result.Value ?? new();
+        }
+        else
+        {
+            pageError = result.ErrorMessage;
+        }
+
+        isLoading = false;
+    }
+
+    private async Task LoadFormLookupsAsync()
+    {
+        var memberResult = await MemberApi.GetAllAsync();
+        if (memberResult.IsSuccess) members = memberResult.Value ?? new();
+
+        var planResult = await PlanApi.GetActiveAsync();
+        if (planResult.IsSuccess) activePlans = planResult.Value ?? new();
+    }
+
+    private MembershipPlanDto? SelectedPlan => activePlans.FirstOrDefault(p => p.PlanId == form.PlanId);
+
+    private List<MembershipOverviewDto> Filtered
+    {
+        get
+        {
+            IEnumerable<MembershipOverviewDto> query = rows;
+
+            if (!string.IsNullOrWhiteSpace(searchTerm))
+            {
+                var term = searchTerm.Trim();
+                query = query.Where(r =>
+                    r.FullName.Contains(term, StringComparison.OrdinalIgnoreCase) ||
+                    r.PlanName.Contains(term, StringComparison.OrdinalIgnoreCase));
+            }
+
+            if (!string.IsNullOrEmpty(statusFilter))
+                query = query.Where(r => r.MembershipStatus == statusFilter);
+
+            if (!string.IsNullOrEmpty(paymentFilter))
+                query = query.Where(r => r.PaymentStatus == paymentFilter);
+
+            if (!string.IsNullOrEmpty(planFilter))
+                query = query.Where(r => r.PlanName == planFilter);
+
+            return query.ToList();
+        }
+    }
+
+    /// <summary>The filtered memberships, sorted and cut down to the page on screen.</summary>
+    private List<MembershipOverviewDto> PageRows => table.Apply(Filtered);
+
+    private void OnSearchInput(ChangeEventArgs args) => searchTerm = args.Value?.ToString() ?? "";
+
+    private void ClearFilters()
+    {
+        searchTerm = "";
+        statusFilter = "";
+        paymentFilter = "";
+        planFilter = "";
+    }
+
+    private async Task OpenCreate()
+    {
+        form = new CreateSubscriptionDto();
+        startDate = DateTime.Today;
+        formError = null;
+        showEditor = true;
+
+        await LoadFormLookupsAsync();
+    }
+
+    private async Task SaveAsync()
+    {
+        formError = null;
+
+        if (form.MemberId <= 0)
+        {
+            formError = "Select the member this membership is for.";
+            return;
+        }
+
+        if (form.PlanId <= 0)
+        {
+            formError = "Select the plan the member is subscribing to.";
+            return;
+        }
+
+        isSaving = true;
+
+        form.StartDate = startDate;
+        var result = await SubscriptionApi.CreateAsync(form);
+
+        isSaving = false;
+
+        if (!result.IsSuccess)
+        {
+            formError = result.ErrorMessage;
+            return;
+        }
+
+        Toasts.Success("The membership was created.");
+        showEditor = false;
+        await ReloadAsync();
+    }
+
+    private void AskRenew(MembershipOverviewDto row) => pendingRenew = row;
+
+    private void AskCancel(MembershipOverviewDto row) => pendingCancel = row;
+
+    private async Task ConfirmRenewAsync()
+    {
+        if (pendingRenew?.SubscriptionId is null) return;
+
+        isBusy = true;
+        var result = await SubscriptionApi.RenewAsync(pendingRenew.SubscriptionId.Value);
+        isBusy = false;
+
+        if (!result.IsSuccess)
+        {
+            pageError = result.ErrorMessage;
+            pendingRenew = null;
+            return;
+        }
+
+        Toasts.Success($"{pendingRenew.FullName}'s membership was renewed.");
+        pendingRenew = null;
+        await ReloadAsync();
+    }
+
+    private async Task ConfirmCancelAsync()
+    {
+        if (pendingCancel?.SubscriptionId is null) return;
+
+        isBusy = true;
+        var result = await SubscriptionApi.CancelAsync(pendingCancel.SubscriptionId.Value);
+        isBusy = false;
+
+        if (!result.IsSuccess)
+        {
+            pageError = result.ErrorMessage;
+            pendingCancel = null;
+            return;
+        }
+
+        Toasts.Success($"{pendingCancel.FullName}'s membership was cancelled.", "Membership cancelled");
+        pendingCancel = null;
+        await ReloadAsync();
+    }
+
+    /// <summary>
+    /// Asks the server to sweep memberships whose end date has passed. The dashboard does this
+    /// on every load; this button exposes it so the list can be brought up to date on demand.
+    /// </summary>
+    private async Task ExpireOverdueAsync()
+    {
+        isBusy = true;
+        var result = await SubscriptionApi.ExpireOverdueAsync();
+        isBusy = false;
+
+        if (!result.IsSuccess)
+        {
+            pageError = result.ErrorMessage;
+            return;
+        }
+
+        Toasts.Info("Overdue memberships were brought up to date.", "Done");
+        await ReloadAsync();
+    }
+}

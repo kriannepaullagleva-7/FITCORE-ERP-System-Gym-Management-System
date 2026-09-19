@@ -1,0 +1,305 @@
+@ERP_api_HostAddress = https://localhost:7214
+
+### ---------------------------------------------------------------------------------------
+### Tenant context
+### The company is resolved by the server. X-Company-Id is honoured in Development only.
+### ---------------------------------------------------------------------------------------
+
+GET {{ERP_api_HostAddress}}/api/tenant/current
+Accept: application/json
+
+###
+GET {{ERP_api_HostAddress}}/api/tenant/current
+X-Company-Id: 1
+Accept: application/json
+
+### Cross-tenant probe. Requires Tenancy:EnableCrossTenantAdminApi, otherwise 403.
+GET {{ERP_api_HostAddress}}/api/tenant/probe/3
+Accept: application/json
+
+### ---------------------------------------------------------------------------------------
+### Members
+### ---------------------------------------------------------------------------------------
+
+GET {{ERP_api_HostAddress}}/api/members
+Accept: application/json
+
+###
+GET {{ERP_api_HostAddress}}/api/members/search?term=alice
+Accept: application/json
+
+###
+GET {{ERP_api_HostAddress}}/api/members/1
+Accept: application/json
+
+###
+POST {{ERP_api_HostAddress}}/api/members
+Content-Type: application/json
+
+{
+  "firstName": "New",
+  "lastName": "Member",
+  "phone": "555-0100",
+  "email": "new.member@example.com"
+}
+
+###
+PUT {{ERP_api_HostAddress}}/api/members/1
+Content-Type: application/json
+
+{
+  "firstName": "Alice",
+  "lastName": "Williams",
+  "phone": "555-0004",
+  "email": "alice@example.com",
+  "status": "Active"
+}
+
+### Returns 409 when the member has subscriptions, payments or sales on record.
+DELETE {{ERP_api_HostAddress}}/api/members/1
+
+###
+GET {{ERP_api_HostAddress}}/api/members/1/subscriptions
+Accept: application/json
+
+###
+GET {{ERP_api_HostAddress}}/api/members/1/payments
+Accept: application/json
+
+###
+GET {{ERP_api_HostAddress}}/api/members/1/sales
+Accept: application/json
+
+### ---------------------------------------------------------------------------------------
+### Membership plans
+### ---------------------------------------------------------------------------------------
+
+GET {{ERP_api_HostAddress}}/api/membership-plans
+Accept: application/json
+
+###
+GET {{ERP_api_HostAddress}}/api/membership-plans/active
+Accept: application/json
+
+###
+POST {{ERP_api_HostAddress}}/api/membership-plans
+Content-Type: application/json
+
+{
+  "planName": "Quarterly",
+  "durationMonths": 3,
+  "price": 4000,
+  "description": "Three month access"
+}
+
+### ---------------------------------------------------------------------------------------
+### Subscriptions
+### ---------------------------------------------------------------------------------------
+
+GET {{ERP_api_HostAddress}}/api/subscriptions
+Accept: application/json
+
+###
+GET {{ERP_api_HostAddress}}/api/subscriptions/active
+Accept: application/json
+
+###
+POST {{ERP_api_HostAddress}}/api/subscriptions
+Content-Type: application/json
+
+{
+  "memberId": 1,
+  "planId": 3
+}
+
+###
+POST {{ERP_api_HostAddress}}/api/subscriptions/1/renew
+
+###
+POST {{ERP_api_HostAddress}}/api/subscriptions/1/cancel
+
+###
+POST {{ERP_api_HostAddress}}/api/subscriptions/expire-overdue
+
+###
+GET {{ERP_api_HostAddress}}/api/subscriptions/1/payments
+Accept: application/json
+
+### ---------------------------------------------------------------------------------------
+### Payments
+### ---------------------------------------------------------------------------------------
+
+GET {{ERP_api_HostAddress}}/api/payments
+Accept: application/json
+
+###
+POST {{ERP_api_HostAddress}}/api/payments
+Content-Type: application/json
+
+{
+  "memberId": 1,
+  "subscriptionId": 1,
+  "amount": 1500,
+  "method": "Cash",
+  "status": "Completed",
+  "referenceNo": "OR-1001",
+  "notes": ""
+}
+
+###
+PATCH {{ERP_api_HostAddress}}/api/payments/1/status
+Content-Type: application/json
+
+{
+  "status": "Completed"
+}
+
+### ---------------------------------------------------------------------------------------
+### Sales
+### ---------------------------------------------------------------------------------------
+
+GET {{ERP_api_HostAddress}}/api/sales
+Accept: application/json
+
+###
+GET {{ERP_api_HostAddress}}/api/sales/1/items
+Accept: application/json
+
+###
+POST {{ERP_api_HostAddress}}/api/sales
+Content-Type: application/json
+
+{
+  "memberId": 1,
+  "items": [
+    { "productId": 2, "quantity": 1, "unitPrice": 250 }
+  ]
+}
+
+### ---------------------------------------------------------------------------------------
+### Products and inventory
+### ---------------------------------------------------------------------------------------
+
+GET {{ERP_api_HostAddress}}/api/products
+Accept: application/json
+
+###
+GET {{ERP_api_HostAddress}}/api/products/active
+Accept: application/json
+
+###
+POST {{ERP_api_HostAddress}}/api/products
+Content-Type: application/json
+
+{
+  "productCode": "SHK-001",
+  "productName": "Protein Shake",
+  "unitPrice": 180,
+  "openingStock": 20,
+  "reorderLevel": 5
+}
+
+###
+GET {{ERP_api_HostAddress}}/api/inventory
+Accept: application/json
+
+###
+GET {{ERP_api_HostAddress}}/api/inventory/movements?take=20
+Accept: application/json
+
+###
+POST {{ERP_api_HostAddress}}/api/inventory/2/stock-in
+Content-Type: application/json
+
+{
+  "quantity": 10,
+  "reference": "PO-1001",
+  "notes": "Restock"
+}
+
+###
+POST {{ERP_api_HostAddress}}/api/inventory/2/stock-out
+Content-Type: application/json
+
+{
+  "quantity": 1,
+  "reference": "ADJ-1001",
+  "notes": "Damaged"
+}
+
+###
+PUT {{ERP_api_HostAddress}}/api/inventory/2/reorder-level
+Content-Type: application/json
+
+{
+  "reorderLevel": 10
+}
+
+### ---------------------------------------------------------------------------------------
+### Customers and suppliers
+### ---------------------------------------------------------------------------------------
+
+GET {{ERP_api_HostAddress}}/api/customers
+Accept: application/json
+
+###
+GET {{ERP_api_HostAddress}}/api/suppliers
+Accept: application/json
+
+### ---------------------------------------------------------------------------------------
+### Reports
+### ---------------------------------------------------------------------------------------
+
+GET {{ERP_api_HostAddress}}/api/reports/dashboard
+Accept: application/json
+
+###
+GET {{ERP_api_HostAddress}}/api/reports/membership-overview
+Accept: application/json
+
+### ---------------------------------------------------------------------------------------
+### System administration (master database)
+### All of these require Tenancy:EnableCrossTenantAdminApi, otherwise 403.
+### ---------------------------------------------------------------------------------------
+
+GET {{ERP_api_HostAddress}}/api/companies
+Accept: application/json
+
+###
+GET {{ERP_api_HostAddress}}/api/companies/databases
+Accept: application/json
+
+###
+POST {{ERP_api_HostAddress}}/api/companies
+Content-Type: application/json
+
+{
+  "companyCode": "COMP003",
+  "companyName": "Second Gym",
+  "isActive": true
+}
+
+###
+POST {{ERP_api_HostAddress}}/api/companies/databases
+Content-Type: application/json
+
+{
+  "companyId": 3,
+  "serverName": "db68433.public.databaseasp.net",
+  "databaseName": "db68433",
+  "credentialKey": "TenantA",
+  "isActive": true
+}
+
+###
+GET {{ERP_api_HostAddress}}/api/companies/devices
+Accept: application/json
+
+### Tenant provisioning (admin). Registering a company only records where its database
+### lives; this applies the tenant migrations to it. Idempotent.
+
+GET {{ERP_api_HostAddress}}/api/companies/3/provisioning
+Accept: application/json
+
+###
+POST {{ERP_api_HostAddress}}/api/companies/1/provision

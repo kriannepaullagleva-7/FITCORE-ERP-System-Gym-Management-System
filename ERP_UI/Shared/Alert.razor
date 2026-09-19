@@ -1,0 +1,39 @@
+@* An inline message. Used for page-level errors and warnings that should stay on screen. *@
+
+@if (!string.IsNullOrWhiteSpace(Message))
+{
+    <div class="fc-alert fc-alert-@Kind" role="@(Kind == "error" ? "alert" : "status")">
+        <Icon Name="@IconFor(Kind)" Size="17" />
+        <div class="fc-alert-body">
+            @if (!string.IsNullOrWhiteSpace(Title))
+            {
+                <div class="fc-strong">@Title</div>
+            }
+            <div>@Message</div>
+        </div>
+        @if (OnDismiss.HasDelegate)
+        {
+            <button type="button" class="fc-alert-close" @onclick="OnDismiss" aria-label="Dismiss">
+                <Icon Name="x" Size="15" />
+            </button>
+        }
+    </div>
+}
+
+@code {
+    [Parameter] public string? Message { get; set; }
+    [Parameter] public string? Title { get; set; }
+
+    /// <summary>error, success, warning or info.</summary>
+    [Parameter] public string Kind { get; set; } = "error";
+
+    [Parameter] public EventCallback OnDismiss { get; set; }
+
+    private static string IconFor(string kind) => kind switch
+    {
+        "success" => "check",
+        "warning" => "alert",
+        "info" => "info",
+        _ => "alert"
+    };
+}

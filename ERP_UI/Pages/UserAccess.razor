@@ -1,0 +1,809 @@
+@page "/fitcore/user-access"
+@inject UserAccessApiService UsersApi
+@inject EmployeeApiService EmployeeApi
+@inject AuthApiService Auth
+@inject ToastService Toasts
+
+@*
+    User Access.
+
+    Who can sign in to this company, with which role, and which modules they may open. This is
+    system administration rather than an enterprise module, so it lives under System in the
+    sidebar and not alongside Membership or Sales.
+
+    Everything on this screen is a master-database fact. Ticking a module writes a row and
+    survives a sign-out; the API applies the same permissions on every request afterwards, so
+    a change here really does open or close the endpoint, not just the menu entry.
+*@
+
+<PageTitle>User Access - FitCore ERP</PageTitle>
+
+<PageHeader Title="User Access"
+            Description="Accounts, roles and module permissions for your company."
+            Crumbs="crumbs">
+    <Actions>
+        <button class="fc-btn fc-btn-secondary" @onclick="ReloadAsync" disabled="@isLoading">
+            <Icon Name="refresh" Size="15" /> Refresh
+        </button>
+        <button class="fc-btn fc-btn-primary" @onclick="OpenCreate">
+            <Icon Name="plus" Size="15" /> Add user
+        </button>
+    </Actions>
+</PageHeader>
+
+<Alert Message="@pageError" Kind="error" OnDismiss="() => pageError = null" />
+
+<div class="fc-kpi-grid">
+    <StatCard Label="Total users" Value="@users.Count.ToString("N0")" Icon="members" Tone="blue" />
+    <StatCard Label="Active" Value="@users.Count(u => u.IsActive).ToString("N0")" Icon="check" Tone="green" />
+    <StatCard Label="Deactivated" Value="@users.Count(u => !u.IsActive).ToString("N0")" Icon="ban" Tone="red" />
+    <StatCard Label="Enterprise plan" Value="@(Auth.CurrentUser?.EnterpriseTier ?? "-")"
+              Hint="Decides which modules exist at all" Icon="layers" Tone="slate" />
+</div>
+
+<div class="fc-filters">
+    <div class="fc-filter fc-filter-grow">
+        <label class="fc-label" for="ua-search">Search</label>
+        <div class="fc-search">
+            <Icon Name="search" Size="15" />
+            <input id="ua-search" class="fc-input" placeholder="Name, username or email"
+                   value="@searchTerm" @oninput="e => searchTerm = e.Value?.ToString() ?? string.Empty" />
+        </div>
+    </div>
+
+    <div class="fc-filter">
+        <label class="fc-label" for="ua-role">Role</label>
+        <select id="ua-role" class="fc-select" @bind="roleFilter">
+            <option value="">All roles</option>
+            @foreach (var role in roles)
+            {
+                <option value="@role.RoleKey">@role.DisplayName</option>
+            }
+        </select>
+    </div>
+
+    <div class="fc-filter">
+        <label class="fc-label" for="ua-status">Status</label>
+        <select id="ua-status" class="fc-select" @bind="statusFilter">
+            <option value="">All</option>
+            <option value="active">Active</option>
+            <option value="inactive">Deactivated</option>
+        </select>
+    </div>
+
+    <button class="fc-btn fc-btn-secondary" @onclick="ClearFilters">
+        <Icon Name="x" Size="14" /> Clear
+    </button>
+</div>
+
+<div class="fc-card">
+    <div class="fc-card-head">
+        <div>
+            <h3 class="fc-card-title">Accounts</h3>
+            <p class="fc-card-sub">Showing @Filtered.Count of @users.Count account(s)</p>
+        </div>
+    </div>
+
+    <div class="fc-card-body is-flush">
+        @if (isLoading)
+        {
+            <LoadingState AsSkeleton="true" Rows="4" />
+        }
+        else if (users.Count == 0)
+        {
+            <EmptyState Title="No user accounts yet"
+                        Message="Create an account so your staff can sign in to FitCore."
+                        Icon="members">
+                <Action>
+                    <button class="fc-btn fc-btn-primary" @onclick="OpenCreate">
+                        <Icon Name="plus" Size="15" /> Add the first user
+                    </button>
+                </Action>
+            </EmptyState>
+        }
+        else if (Filtered.Count == 0)
+        {
+            <EmptyState Title="No users match those filters" Icon="filter">
+                <Action>
+                    <button class="fc-btn fc-btn-secondary" @onclick="ClearFilters">Clear filters</button>
+                </Action>
+            </EmptyState>
+        }
+        else
+        {
+            <div class="fc-table-wrap">
+                <table class="fc-table">
+                    <thead>
+                        <tr>
+                            <th>User</th>
+                            <th>Linked employee</th>
+                            <th>Role</th>
+                            <th>Module access</th>
+                            <th>Last signed in</th>
+                            <th>Status</th>
+                            <th class="fc-right">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var user in Filtered)
+                        {
+                            <tr class="@(user.IsActive ? "" : "is-muted")">
+                                <td>
+                                    <div class="fc-person">
+                                        <span class="fc-avatar is-sm">@InitialsOf(user.FullName)</span>
+                                        <span>
+                                            <span class="fc-cell-strong">@user.FullName</span>
+                                            <span class="fc-cell-sub">@user.Username</span>
+                                        </span>
+                                    </div>
+                                </td>
+                                <td class="fc-small">
+                                    @(string.IsNullOrWhiteSpace(user.EmployeeName)
+                                        ? (MarkupString)"<span class=\"fc-muted\">Not linked</span>"
+                                        : (MarkupString)System.Net.WebUtility.HtmlEncode(user.EmployeeName))
+                                </td>
+                                <td><span class="fc-badge tone-@RoleTone(user.RoleKey) no-dot">@user.RoleDisplayName</span></td>
+                                <td>
+                                    <span class="fc-modlist">
+                                        @foreach (var module in user.Modules.Where(m => m != Modules.Dashboard).Take(4))
+                                        {
+                                            <span class="fc-chip is-xs">@ShortName(module)</span>
+                                        }
+                                        @if (user.Modules.Count(m => m != Modules.Dashboard) > 4)
+                                        {
+                                            <span class="fc-chip is-xs">+@(user.Modules.Count(m => m != Modules.Dashboard) - 4)</span>
+                                        }
+                                    </span>
+                                </td>
+                                <td class="fc-small fc-nowrap">
+                                    @(user.LastLoginAt.HasValue
+                                        ? user.LastLoginAt.Value.ToLocalTime().ToString("d MMM yyyy HH:mm")
+                                        : "Never")
+                                </td>
+                                <td><StatusBadge Status="@(user.IsActive ? "Active" : "Inactive")" /></td>
+                                <td class="fc-right">
+                                    <span class="fc-actions">
+                                        <button class="fc-act" title="View account" @onclick="() => detail = user">
+                                            <Icon Name="eye" Size="14" />
+                                        </button>
+                                        <button class="fc-act" title="Manage access" @onclick="() => OpenPermissionsAsync(user)"
+                                                disabled="@(!CanManage(user))">
+                                            <Icon Name="shield" Size="14" />
+                                        </button>
+                                        <button class="fc-act" title="Edit user" @onclick="() => OpenEdit(user)"
+                                                disabled="@(!CanManage(user))">
+                                            <Icon Name="edit" Size="14" />
+                                        </button>
+                                        <button class="fc-act" title="Reset password" @onclick="() => OpenReset(user)"
+                                                disabled="@(!CanManage(user))">
+                                            <Icon Name="key" Size="14" />
+                                        </button>
+                                        <button class="fc-act @(user.IsActive ? "is-danger" : "")"
+                                                title="@(user.IsActive ? "Deactivate" : "Reactivate")"
+                                                @onclick="() => ConfirmStatus(user)"
+                                                disabled="@(!CanManage(user) || user.AppUserId == Auth.CurrentUser?.AppUserId)">
+                                            <Icon Name="@(user.IsActive ? "ban" : "check")" Size="14" />
+                                        </button>
+                                    </span>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </div>
+</div>
+
+@* ------------------------------------------------------------------ Permission editor *@
+<Modal IsOpen="@(editor is not null)" Title="Edit access" Size="wide" OnClose="CloseEditor"
+       Subtitle="@(editor is null ? null : $"{editor.FullName} - {editor.RoleDisplayName}")">
+    <ChildContent>
+    @if (editor is not null)
+    {
+        <Alert Message="@editorError" Kind="error" OnDismiss="() => editorError = null" />
+
+        <p class="fc-muted fc-small">
+            A ticked module is one this person can open. Modules follow their role unless you
+            change them here; anything you change is stored against the account and applies
+            the next time they sign in.
+        </p>
+
+        @foreach (var group in editor.Modules.GroupBy(m => m.Group))
+        {
+            <div class="fc-perm-group">
+                <div class="fc-perm-group-title">@group.Key</div>
+
+                @foreach (var module in group)
+                {
+                    <label class="fc-perm-row @(module.AvailableInTier ? "" : "is-locked")">
+                        <input type="checkbox" class="fc-checkbox"
+                               checked="@selectedModules.Contains(module.Module)"
+                               disabled="@(!module.AvailableInTier || savingEditor)"
+                               @onchange="e => ToggleModule(module.Module, (bool?)e.Value == true)" />
+
+                        <span class="fc-perm-body">
+                            <span class="fc-perm-name">@module.DisplayName</span>
+
+                            @if (!module.AvailableInTier)
+                            {
+                                <span class="fc-perm-note">
+                                    Not part of the @editor.EnterpriseTierName Enterprise plan
+                                </span>
+                            }
+                            else if (module.UserOverride is bool over)
+                            {
+                                <span class="fc-perm-note">
+                                    @(over ? "Granted specifically to this user" : "Withheld from this user")
+                                    &middot; role default: @(module.GrantedByRole ? "allowed" : "not allowed")
+                                </span>
+                            }
+                            else
+                            {
+                                <span class="fc-perm-note">
+                                    Following the @editor.RoleDisplayName role
+                                    (@(module.GrantedByRole ? "allowed" : "not allowed"))
+                                </span>
+                            }
+                        </span>
+
+                        @if (!module.AvailableInTier)
+                        {
+                            <Icon Name="lock" Size="14" />
+                        }
+                    </label>
+                }
+            </div>
+        }
+    }
+
+    </ChildContent>
+
+    <Footer>
+        <button class="fc-btn fc-btn-secondary" @onclick="CloseEditor" disabled="@savingEditor">Cancel</button>
+        <button class="fc-btn fc-btn-primary" @onclick="SavePermissionsAsync" disabled="@savingEditor">
+            @if (savingEditor)
+            {
+                <span class="fc-spinner is-sm"></span><span>Saving&hellip;</span>
+            }
+            else
+            {
+                <Icon Name="check" Size="15" />
+                <span>Save changes</span>
+            }
+        </button>
+    </Footer>
+</Modal>
+
+@* ------------------------------------------------------------------ Create / edit user *@
+<Modal IsOpen="@showForm" Title="@(editingId is null ? "Add user" : "Edit user")" OnClose="CloseForm">
+    <ChildContent>
+    <Alert Message="@formError" Kind="error" OnDismiss="() => formError = null" />
+
+    <div class="fc-form-section">Account</div>
+
+    <div class="fc-field">
+        <label for="ua-fullname">Full name <span class="fc-req">*</span></label>
+        <input id="ua-fullname" class="fc-input" @bind="form.FullName" disabled="@savingForm" />
+    </div>
+
+    <div class="fc-grid-2">
+        <div class="fc-field">
+            <label for="ua-username">Username <span class="fc-req">*</span></label>
+            <input id="ua-username" class="fc-input" @bind="form.Username"
+                   disabled="@(savingForm || editingId is not null)" />
+            @if (editingId is not null)
+            {
+                <span class="fc-hint">A username cannot be changed once the account exists.</span>
+            }
+        </div>
+
+        <div class="fc-field">
+            <label for="ua-email">Email</label>
+            <input id="ua-email" class="fc-input" type="email" @bind="form.Email" disabled="@savingForm" />
+        </div>
+    </div>
+
+    @if (editingId is null)
+    {
+        <div class="fc-grid-2">
+            <div class="fc-field">
+                <label for="ua-password">Initial password <span class="fc-req">*</span></label>
+                <input id="ua-password" class="fc-input" type="password" @bind="form.Password" disabled="@savingForm" />
+                <span class="fc-hint">At least 8 characters. They will be asked to change it.</span>
+            </div>
+
+            <div class="fc-field">
+                <label for="ua-role">Role <span class="fc-req">*</span></label>
+                <select id="ua-role-new" class="fc-select" @bind="form.RoleKey" disabled="@savingForm">
+                    @foreach (var role in AssignableRoles)
+                    {
+                        <option value="@role.RoleKey">@role.DisplayName</option>
+                    }
+                </select>
+            </div>
+        </div>
+    }
+
+    <div class="fc-form-section">Employee record</div>
+
+    <div class="fc-field">
+        <label for="ua-employee">Linked employee</label>
+        <select id="ua-employee" class="fc-select" @bind="form.EmployeeIdText" disabled="@savingForm">
+            <option value="">Not linked</option>
+            @foreach (var employee in employees)
+            {
+                <option value="@employee.EmployeeId">@employee.FullName (@employee.EmployeeCode)</option>
+            }
+        </select>
+        <span class="fc-hint">
+            Optional. Links the sign-in account to a record in your own Employees module.
+        </span>
+    </div>
+
+    </ChildContent>
+
+    <Footer>
+        <button class="fc-btn fc-btn-secondary" @onclick="CloseForm" disabled="@savingForm">Cancel</button>
+        <button class="fc-btn fc-btn-primary" @onclick="SaveFormAsync" disabled="@savingForm">
+            @if (savingForm)
+            {
+                <span class="fc-spinner is-sm"></span><span>Saving&hellip;</span>
+            }
+            else
+            {
+                <Icon Name="check" Size="15" />
+                <span>@(editingId is null ? "Create user" : "Save changes")</span>
+            }
+        </button>
+    </Footer>
+</Modal>
+
+@* ------------------------------------------------------------------ Detail drawer *@
+<Modal IsOpen="@(detail is not null)" Title="Account details" OnClose="() => detail = null"
+       Subtitle="@detail?.Username" CloseOnBackdropClick="true">
+    @if (detail is not null)
+    {
+        <dl class="fc-detail">
+            <dt>Full name</dt><dd>@detail.FullName</dd>
+            <dt>Username</dt><dd>@detail.Username</dd>
+            <dt>Email</dt><dd>@(string.IsNullOrWhiteSpace(detail.Email) ? "-" : detail.Email)</dd>
+            <dt>Role</dt><dd>@detail.RoleDisplayName</dd>
+            <dt>Company</dt><dd>@detail.CompanyName</dd>
+            <dt>Linked employee</dt><dd>@(string.IsNullOrWhiteSpace(detail.EmployeeName) ? "Not linked" : detail.EmployeeName)</dd>
+            <dt>Status</dt><dd><StatusBadge Status="@(detail.IsActive ? "Active" : "Inactive")" /></dd>
+            <dt>Created</dt><dd>@detail.CreatedAt.ToLocalTime().ToString("d MMM yyyy")</dd>
+            <dt>Last signed in</dt>
+            <dd>@(detail.LastLoginAt.HasValue ? detail.LastLoginAt.Value.ToLocalTime().ToString("d MMM yyyy HH:mm") : "Never")</dd>
+            <dt>Modules</dt>
+            <dd>
+                <span class="fc-modlist">
+                    @foreach (var module in detail.Modules)
+                    {
+                        <span class="fc-chip is-xs">@ShortName(module)</span>
+                    }
+                </span>
+            </dd>
+        </dl>
+    }
+</Modal>
+
+@* ------------------------------------------------------------------ Reset password *@
+<Modal IsOpen="@(resetTarget is not null)" Title="Reset password" Size="narrow" OnClose="() => resetTarget = null"
+       Subtitle="@resetTarget?.FullName">
+    <ChildContent>
+    <Alert Message="@resetError" Kind="error" OnDismiss="() => resetError = null" />
+
+    <div class="fc-field">
+        <label for="ua-newpass">New password <span class="fc-req">*</span></label>
+        <input id="ua-newpass" class="fc-input" type="text" @bind="resetPassword" disabled="@savingReset" />
+        <span class="fc-hint">
+            At least 8 characters. They will be asked to change it when they next sign in.
+        </span>
+    </div>
+
+    </ChildContent>
+
+    <Footer>
+        <button class="fc-btn fc-btn-secondary" @onclick="() => resetTarget = null" disabled="@savingReset">Cancel</button>
+        <button class="fc-btn fc-btn-warning" @onclick="ResetPasswordAsync" disabled="@savingReset">
+            @if (savingReset)
+            {
+                <span class="fc-spinner is-sm"></span><span>Resetting&hellip;</span>
+            }
+            else
+            {
+                <Icon Name="key" Size="15" />
+                <span>Reset password</span>
+            }
+        </button>
+    </Footer>
+</Modal>
+
+<ConfirmDialog IsOpen="@(statusTarget is not null)"
+               Title="@(statusTarget?.IsActive == true ? "Deactivate this account?" : "Reactivate this account?")"
+               Message="@StatusMessage"
+               ConfirmText="@(statusTarget?.IsActive == true ? "Deactivate" : "Reactivate")"
+               IsDestructive="@(statusTarget?.IsActive == true)"
+               OnConfirm="ApplyStatusAsync"
+               OnCancel="() => statusTarget = null" />
+
+@code {
+    private readonly List<PageHeader.Crumb> crumbs = new() { new("System"), new("User Access") };
+
+    private List<UserAccountDto> users = new();
+    private List<RoleDto> roles = new();
+    private List<EmployeeDto> employees = new();
+
+    private bool isLoading = true;
+    private string? pageError;
+
+    private string searchTerm = "";
+    private string roleFilter = "";
+    private string statusFilter = "";
+
+    private UserAccountDto? detail;
+
+    // Permission editor
+    private UserPermissionEditorDto? editor;
+    private HashSet<string> selectedModules = new(StringComparer.OrdinalIgnoreCase);
+    private bool savingEditor;
+    private string? editorError;
+
+    // Create / edit form
+    private bool showForm;
+    private int? editingId;
+    private UserForm form = new();
+    private bool savingForm;
+    private string? formError;
+
+    // Reset password
+    private UserAccountDto? resetTarget;
+    private string resetPassword = "";
+    private bool savingReset;
+    private string? resetError;
+
+    // Activate / deactivate
+    private UserAccountDto? statusTarget;
+
+    protected override async Task OnInitializedAsync() => await ReloadAsync();
+
+    private async Task ReloadAsync()
+    {
+        isLoading = true;
+        pageError = null;
+
+        var usersResult = await UsersApi.GetAllAsync();
+        if (usersResult.IsSuccess) users = usersResult.Value ?? new();
+        else pageError = usersResult.ErrorMessage;
+
+        var rolesResult = await UsersApi.GetRolesAsync();
+        if (rolesResult.IsSuccess) roles = rolesResult.Value ?? new();
+
+        // Only offered if the signed-in user can see employees at all; the dropdown is a
+        // convenience and must not be the thing that provokes a 403.
+        if (Auth.Can(Modules.Employees))
+        {
+            var employeeResult = await EmployeeApi.GetAllAsync();
+            if (employeeResult.IsSuccess) employees = employeeResult.Value ?? new();
+        }
+
+        isLoading = false;
+    }
+
+    private List<UserAccountDto> Filtered
+    {
+        get
+        {
+            IEnumerable<UserAccountDto> query = users;
+
+            if (!string.IsNullOrWhiteSpace(searchTerm))
+            {
+                var term = searchTerm.Trim();
+                query = query.Where(u =>
+                    u.FullName.Contains(term, StringComparison.OrdinalIgnoreCase) ||
+                    u.Username.Contains(term, StringComparison.OrdinalIgnoreCase) ||
+                    u.Email.Contains(term, StringComparison.OrdinalIgnoreCase));
+            }
+
+            if (!string.IsNullOrWhiteSpace(roleFilter))
+                query = query.Where(u => u.RoleKey == roleFilter);
+
+            if (statusFilter == "active")   query = query.Where(u => u.IsActive);
+            if (statusFilter == "inactive") query = query.Where(u => !u.IsActive);
+
+            return query.OrderBy(u => u.RoleLevel).ThenBy(u => u.FullName).ToList();
+        }
+    }
+
+    private void ClearFilters()
+    {
+        searchTerm = "";
+        roleFilter = "";
+        statusFilter = "";
+    }
+
+    /// <summary>
+    /// A user may only be edited by somebody at least as senior. The server enforces the same
+    /// rule; disabling the button here just avoids offering an action that would be refused.
+    /// </summary>
+    private bool CanManage(UserAccountDto user) =>
+        Auth.CurrentUser is not null && user.RoleLevel >= Auth.CurrentUser.RoleLevel;
+
+    private IEnumerable<RoleDto> AssignableRoles =>
+        roles.Where(r => Auth.CurrentUser is null || r.HierarchyLevel >= Auth.CurrentUser.RoleLevel);
+
+    // ---------------------------------------------------------------- permission editor
+
+    private async Task OpenPermissionsAsync(UserAccountDto user)
+    {
+        editorError = null;
+
+        var result = await UsersApi.GetPermissionsAsync(user.AppUserId);
+
+        if (!result.IsSuccess || result.Value is null)
+        {
+            Toasts.Error(result.ErrorMessage ?? "The permissions could not be loaded.");
+            return;
+        }
+
+        editor = result.Value;
+        selectedModules = editor.Modules
+            .Where(m => m.Effective)
+            .Select(m => m.Module)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+    }
+
+    private void ToggleModule(string module, bool granted)
+    {
+        if (granted) selectedModules.Add(module);
+        else selectedModules.Remove(module);
+    }
+
+    private async Task SavePermissionsAsync()
+    {
+        if (editor is null || savingEditor) return;
+
+        savingEditor = true;
+        editorError = null;
+
+        try
+        {
+            var result = await UsersApi.SetPermissionsAsync(editor.AppUserId, selectedModules.ToList());
+
+            if (!result.IsSuccess)
+            {
+                // The dialog stays open on failure so the choices are not lost.
+                editorError = result.ErrorMessage ?? "The permissions could not be saved.";
+                return;
+            }
+
+            Toasts.Success($"Module access updated for {editor.FullName}.");
+
+            var changedSelf = editor.AppUserId == Auth.CurrentUser?.AppUserId;
+
+            editor = null;
+            await ReloadAsync();
+
+            // Editing your own access would otherwise leave the sidebar showing what you had
+            // a moment ago until you signed out and back in.
+            if (changedSelf) await Auth.RefreshAsync();
+        }
+        finally
+        {
+            savingEditor = false;
+        }
+    }
+
+    private void CloseEditor()
+    {
+        editor = null;
+        editorError = null;
+    }
+
+    // ---------------------------------------------------------------- create / edit
+
+    private void OpenCreate()
+    {
+        editingId = null;
+        form = new UserForm { RoleKey = AssignableRoles.LastOrDefault()?.RoleKey ?? "staff" };
+        formError = null;
+        showForm = true;
+    }
+
+    private void OpenEdit(UserAccountDto user)
+    {
+        editingId = user.AppUserId;
+        form = new UserForm
+        {
+            Username = user.Username,
+            FullName = user.FullName,
+            Email = user.Email,
+            RoleKey = user.RoleKey,
+            EmployeeIdText = user.EmployeeId?.ToString() ?? ""
+        };
+        formError = null;
+        showForm = true;
+    }
+
+    private void CloseForm()
+    {
+        showForm = false;
+        formError = null;
+    }
+
+    private async Task SaveFormAsync()
+    {
+        if (savingForm) return;
+
+        savingForm = true;
+        formError = null;
+
+        try
+        {
+            if (editingId is null)
+            {
+                var result = await UsersApi.CreateAsync(new CreateUserRequestDto
+                {
+                    Username = form.Username,
+                    FullName = form.FullName,
+                    Email = form.Email,
+                    Password = form.Password,
+                    RoleKey = form.RoleKey,
+                    EmployeeId = form.EmployeeId
+                });
+
+                if (!result.IsSuccess)
+                {
+                    formError = result.ErrorMessage ?? "The user could not be created.";
+                    return;
+                }
+
+                Toasts.Success($"{form.FullName} can now sign in to FitCore.", "User created");
+            }
+            else
+            {
+                var result = await UsersApi.UpdateAsync(editingId.Value, new UpdateUserRequestDto
+                {
+                    FullName = form.FullName,
+                    Email = form.Email,
+                    EmployeeId = form.EmployeeId
+                });
+
+                if (!result.IsSuccess)
+                {
+                    formError = result.ErrorMessage ?? "The user could not be saved.";
+                    return;
+                }
+
+                Toasts.Success($"{form.FullName} was updated.");
+            }
+
+            showForm = false;
+            await ReloadAsync();
+        }
+        finally
+        {
+            savingForm = false;
+        }
+    }
+
+    // ---------------------------------------------------------------- reset password
+
+    private void OpenReset(UserAccountDto user)
+    {
+        resetTarget = user;
+        resetPassword = "";
+        resetError = null;
+    }
+
+    private async Task ResetPasswordAsync()
+    {
+        if (resetTarget is null || savingReset) return;
+
+        savingReset = true;
+        resetError = null;
+
+        try
+        {
+            var result = await UsersApi.ResetPasswordAsync(resetTarget.AppUserId, resetPassword);
+
+            if (!result.IsSuccess)
+            {
+                resetError = result.ErrorMessage ?? "The password could not be reset.";
+                return;
+            }
+
+            Toasts.Success($"The password for {resetTarget.FullName} was reset.");
+            resetTarget = null;
+        }
+        finally
+        {
+            savingReset = false;
+        }
+    }
+
+    // ---------------------------------------------------------------- activate / deactivate
+
+    private void ConfirmStatus(UserAccountDto user) => statusTarget = user;
+
+    private string StatusMessage => statusTarget is null
+        ? ""
+        : statusTarget.IsActive
+            ? $"{statusTarget.FullName} will no longer be able to sign in. Their records and history are kept."
+            : $"{statusTarget.FullName} will be able to sign in again with their existing password.";
+
+    private async Task ApplyStatusAsync()
+    {
+        if (statusTarget is null) return;
+
+        var target = statusTarget;
+        statusTarget = null;
+
+        var result = await UsersApi.SetStatusAsync(target.AppUserId, !target.IsActive);
+
+        if (!result.IsSuccess)
+        {
+            Toasts.Error(result.ErrorMessage ?? "The account status could not be changed.");
+            return;
+        }
+
+        Toasts.Success(target.IsActive
+            ? $"{target.FullName} was deactivated."
+            : $"{target.FullName} was reactivated.");
+
+        await ReloadAsync();
+    }
+
+    // ---------------------------------------------------------------- helpers
+
+    private static string InitialsOf(string fullName)
+    {
+        var parts = (fullName ?? "")
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        return parts.Length switch
+        {
+            0 => "?",
+            1 => parts[0][..Math.Min(2, parts[0].Length)].ToUpperInvariant(),
+            _ => $"{parts[0][0]}{parts[^1][0]}".ToUpperInvariant()
+        };
+    }
+
+    private static string RoleTone(string roleKey) => roleKey switch
+    {
+        "admin" => "blue",
+        "manager" => "green",
+        _ => "slate"
+    };
+
+    private static string ShortName(string module) => module switch
+    {
+        Modules.Dashboard => "Dashboard",
+        Modules.Membership => "Membership",
+        Modules.Sales => "Sales",
+        Modules.Payments => "Payments",
+        Modules.Inventory => "Inventory",
+        Modules.Employees => "Employees",
+        Modules.Payroll => "Payroll",
+        Modules.Expenses => "Expenses",
+        Modules.Reports => "Reports",
+        Modules.UserAccess => "User Access",
+        _ => module
+    };
+
+    private sealed class UserForm
+    {
+        public string Username { get; set; } = "";
+        public string FullName { get; set; } = "";
+        public string Email { get; set; } = "";
+        public string Password { get; set; } = "";
+        public string RoleKey { get; set; } = "staff";
+
+        /// <summary>Bound to the select, which works in strings.</summary>
+        public string EmployeeIdText { get; set; } = "";
+
+        public int? EmployeeId =>
+            int.TryParse(EmployeeIdText, out var id) ? id : null;
+    }
+}

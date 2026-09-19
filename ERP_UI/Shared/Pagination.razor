@@ -1,0 +1,73 @@
+@*
+    Page controls for a table. Hidden entirely when everything fits on one page, so a short
+    list is not cluttered by a control that cannot do anything.
+*@
+
+@if (State.TotalCount > 0)
+{
+    <div class="fc-pager">
+        <div class="fc-pager-info">
+            Showing @State.FirstRowOnPage&ndash;@State.LastRowOnPage of @State.TotalCount
+        </div>
+
+        <div class="fc-pager-controls">
+            <label class="fc-pager-size">
+                <span class="fc-xs fc-muted">Rows</span>
+                <select class="fc-select fc-btn-sm" value="@State.PageSize" @onchange="ChangePageSize">
+                    @foreach (var size in PageSizes)
+                    {
+                        <option value="@size">@size</option>
+                    }
+                </select>
+            </label>
+
+            @if (State.TotalPages > 1)
+            {
+                <button type="button" class="fc-act" title="First page"
+                        disabled="@(State.Page <= 1)" @onclick="() => Go(1)">
+                    <Icon Name="chevron-left" Size="13" />
+                </button>
+                <button type="button" class="fc-act" title="Previous page"
+                        disabled="@(State.Page <= 1)" @onclick="() => Go(State.Page - 1)">
+                    <Icon Name="chevron-left" Size="14" />
+                </button>
+
+                <span class="fc-pager-page">Page @State.Page of @State.TotalPages</span>
+
+                <button type="button" class="fc-act" title="Next page"
+                        disabled="@(State.Page >= State.TotalPages)" @onclick="() => Go(State.Page + 1)">
+                    <Icon Name="chevron-right" Size="14" />
+                </button>
+                <button type="button" class="fc-act" title="Last page"
+                        disabled="@(State.Page >= State.TotalPages)" @onclick="() => Go(State.TotalPages)">
+                    <Icon Name="chevron-right" Size="13" />
+                </button>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter, EditorRequired] public ITableState State { get; set; } = default!;
+
+    /// <summary>Raised after the page or page size changes so the page can re-render.</summary>
+    [Parameter] public EventCallback OnChanged { get; set; }
+
+    private static readonly int[] PageSizes = { 10, 25, 50, 100 };
+
+    private async Task Go(int page)
+    {
+        State.GoToPage(page);
+        await OnChanged.InvokeAsync();
+    }
+
+    private async Task ChangePageSize(ChangeEventArgs args)
+    {
+        if (int.TryParse(args.Value?.ToString(), out var size))
+        {
+            State.PageSize = size;
+            State.GoToPage(1);
+            await OnChanged.InvokeAsync();
+        }
+    }
+}

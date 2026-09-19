@@ -1,0 +1,591 @@
+@page "/fitcore/products"
+@inject ProductApiService ProductApi
+@inject InventoryApiService InventoryApi
+@inject ToastService Toasts
+
+@*
+    The product catalogue. Stock levels live in Inventory; this page owns what a product is
+    and what it costs. Creating a product also opens its stock record, so nothing sold here
+    can be invisible to the inventory ledger.
+*@
+
+<PageTitle>Products - FitCore ERP</PageTitle>
+
+<PageHeader Title="Products"
+            Description="What the gym sells, with cost, selling price and margin."
+            Crumbs="crumbs">
+    <Actions>
+        <a class="fc-btn fc-btn-secondary" href="fitcore/inventory">
+            <Icon Name="inventory" Size="15" /> Inventory
+        </a>
+        <button class="fc-btn fc-btn-primary" @onclick="OpenCreate">
+            <Icon Name="plus" Size="15" /> Add product
+        </button>
+    </Actions>
+</PageHeader>
+
+<Alert Message="@pageError" Kind="error" OnDismiss="() => pageError = null" />
+
+<div class="fc-kpi-grid">
+    <StatCard Label="Total products" Value="@products.Count.ToString("N0")" Icon="product" Tone="blue" />
+    <StatCard Label="Active" Value="@products.Count(p => p.IsActive).ToString("N0")"
+              Hint="Available to sell" Icon="check" Tone="green" />
+    <StatCard Label="Categories" Value="@products.Select(p => p.Category).Distinct().Count().ToString("N0")"
+              Icon="filter" Tone="slate" />
+    <StatCard Label="Average margin" Value="@AverageMargin.ToString("N2")"
+              Hint="Selling price less cost" Icon="trend-up" Tone="blue" />
+</div>
+
+<div class="fc-filters">
+    <div class="fc-filter fc-filter-grow">
+        <label class="fc-label" for="product-search">Search</label>
+        <div class="fc-search">
+            <Icon Name="search" Size="15" />
+            <input id="product-search" class="fc-input" placeholder="Name or SKU"
+                   value="@searchTerm" @oninput="OnSearchInput" />
+        </div>
+    </div>
+
+    <div class="fc-filter">
+        <label class="fc-label" for="product-category">Category</label>
+        <select id="product-category" class="fc-select" @bind="categoryFilter">
+            <option value="">All categories</option>
+            @foreach (var category in categories)
+            {
+                <option value="@category">@category</option>
+            }
+        </select>
+    </div>
+
+    <div class="fc-filter">
+        <label class="fc-label" for="product-state">Status</label>
+        <select id="product-state" class="fc-select" @bind="statusFilter">
+            <option value="">All</option>
+            <option value="active">Active only</option>
+            <option value="inactive">Inactive only</option>
+        </select>
+    </div>
+
+    <button class="fc-btn fc-btn-secondary" @onclick="ClearFilters">
+        <Icon Name="x" Size="14" /> Clear
+    </button>
+</div>
+
+<div class="fc-card">
+    <div class="fc-card-head">
+        <div>
+            <h3 class="fc-card-title">Catalogue</h3>
+            <p class="fc-card-sub">Showing @Filtered.Count of @products.Count product(s)</p>
+        </div>
+    </div>
+
+    <div class="fc-card-body is-flush">
+        @if (isLoading)
+        {
+            <LoadingState AsSkeleton="true" Rows="5" />
+        }
+        else if (products.Count == 0)
+        {
+            <EmptyState Title="No products yet"
+                        Message="Add a product to start selling it at the counter and tracking its stock."
+                        Icon="product">
+                <Action>
+                    <button class="fc-btn fc-btn-primary" @onclick="OpenCreate">
+                        <Icon Name="plus" Size="15" /> Add the first product
+                    </button>
+                </Action>
+            </EmptyState>
+        }
+        else if (Filtered.Count == 0)
+        {
+            <EmptyState Title="No products match those filters" Icon="filter">
+                <Action>
+                    <button class="fc-btn fc-btn-secondary" @onclick="ClearFilters">Clear filters</button>
+                </Action>
+            </EmptyState>
+        }
+        else
+        {
+            <div class="fc-table-wrap">
+                <table class="fc-table">
+                    <thead>
+                        <tr>
+                            <SortableHeader State="table" Column="SKU" Label="SKU" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Column="Product" Label="Product" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Column="Category" Label="Category" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Column="Cost" Label="Cost" CssClass="fc-right" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Column="Price" Label="Selling price" CssClass="fc-right" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Column="Margin" Label="Margin" CssClass="fc-right" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Column="Stock" Label="In stock" CssClass="fc-right" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Column="Status" Label="Status" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Label="Actions" CssClass="fc-right" />
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var product in PageRows)
+                        {
+                            var stock = StockFor(product.ProductId);
+                            <tr class="@(product.IsActive ? "" : "is-muted")">
+                                <td class="fc-id">@product.ProductCode</td>
+                                <td class="fc-cell-strong">@product.ProductName</td>
+                                <td><span class="fc-chip">@product.Category</span></td>
+                                <td class="fc-right fc-num">@product.CostPrice.ToString("N2")</td>
+                                <td class="fc-right fc-num fc-strong">@product.UnitPrice.ToString("N2")</td>
+                                <td class="fc-right fc-num @(product.Margin >= 0 ? "fc-pos" : "fc-neg")">
+                                    @product.Margin.ToString("N2")
+                                </td>
+                                <td class="fc-right fc-num">
+                                    @if (stock is null)
+                                    {
+                                        <span class="fc-muted">-</span>
+                                    }
+                                    else
+                                    {
+                                        @stock.QuantityOnHand.ToString("N0")
+                                        <span class="fc-cell-sub">
+                                            <StatusBadge Status="@stock.StockStatus" />
+                                        </span>
+                                    }
+                                </td>
+                                <td><StatusBadge Status="@(product.IsActive ? "Active" : "Inactive")" /></td>
+                                <td class="fc-right">
+                                    <span class="fc-actions">
+                                        <button class="fc-act" title="View product" @onclick="() => detail = product">
+                                            <Icon Name="eye" Size="14" />
+                                        </button>
+                                        <button class="fc-act" title="Edit product" @onclick="() => OpenEdit(product)">
+                                            <Icon Name="edit" Size="14" />
+                                        </button>
+                                        <button class="fc-act is-danger" title="Delete product"
+                                                @onclick="() => pendingDelete = product">
+                                            <Icon Name="trash" Size="14" />
+                                        </button>
+                                    </span>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            <Pagination State="table" OnChanged="StateHasChanged" />
+        }
+    </div>
+</div>
+
+<Modal IsOpen="showEditor" Title="@(editingId is null ? "Add product" : $"Edit {form.ProductName}")"
+       Subtitle="Prices are held on the product and copied onto a sale line when it is sold."
+       OnClose="CloseEditor">
+    <ChildContent>
+        <Alert Message="@formError" Kind="error" />
+
+        <div class="fc-form-grid">
+            <div class="fc-field">
+                <label class="fc-label" for="sku">SKU / product code<span class="fc-req">*</span></label>
+                <input id="sku" class="fc-input @(Invalid(nameof(form.ProductCode)))" @bind="form.ProductCode"
+                       placeholder="e.g. PRO-001" />
+                @if (fieldErrors.TryGetValue(nameof(form.ProductCode), out var codeError))
+                {
+                    <span class="fc-error">@codeError</span>
+                }
+                else
+                {
+                    <span class="fc-hint">Must be unique. The database enforces it too.</span>
+                }
+            </div>
+
+            <div class="fc-field">
+                <label class="fc-label" for="product-name">Product name<span class="fc-req">*</span></label>
+                <input id="product-name" class="fc-input @(Invalid(nameof(form.ProductName)))" @bind="form.ProductName" />
+                @if (fieldErrors.TryGetValue(nameof(form.ProductName), out var nameError))
+                {
+                    <span class="fc-error">@nameError</span>
+                }
+            </div>
+
+            <div class="fc-field">
+                <label class="fc-label" for="category">Category</label>
+                <select id="category" class="fc-select" @bind="form.Category">
+                    @foreach (var category in categories)
+                    {
+                        <option value="@category">@category</option>
+                    }
+                </select>
+            </div>
+
+            <div class="fc-field">
+                <label class="fc-label" for="cost">Cost price</label>
+                <input id="cost" type="number" min="0" step="0.01"
+                       class="fc-input @(Invalid(nameof(form.CostPrice)))" @bind="form.CostPrice" />
+                @if (fieldErrors.TryGetValue(nameof(form.CostPrice), out var costError))
+                {
+                    <span class="fc-error">@costError</span>
+                }
+                else
+                {
+                    <span class="fc-hint">What you pay. Drives the margin in reports.</span>
+                }
+            </div>
+
+            <div class="fc-field">
+                <label class="fc-label" for="price">Selling price<span class="fc-req">*</span></label>
+                <input id="price" type="number" min="0" step="0.01"
+                       class="fc-input @(Invalid(nameof(form.UnitPrice)))" @bind="form.UnitPrice" />
+                @if (fieldErrors.TryGetValue(nameof(form.UnitPrice), out var priceError))
+                {
+                    <span class="fc-error">@priceError</span>
+                }
+            </div>
+
+            @if (editingId is null)
+            {
+                <div class="fc-field">
+                    <label class="fc-label" for="opening">Opening stock</label>
+                    <input id="opening" type="number" min="0" step="1" class="fc-input" @bind="openingStock" />
+                    <span class="fc-hint">Recorded as an opening stock movement.</span>
+                </div>
+
+                <div class="fc-field">
+                    <label class="fc-label" for="reorder">Reorder level</label>
+                    <input id="reorder" type="number" min="0" step="1" class="fc-input" @bind="reorderLevel" />
+                    <span class="fc-hint">Stock at or below this counts as low.</span>
+                </div>
+            }
+            else
+            {
+                <div class="fc-field fc-span-2">
+                    <label class="fc-check">
+                        <input type="checkbox" @bind="form.IsActive" />
+                        <span>Available to sell</span>
+                    </label>
+                    <span class="fc-hint">
+                        An inactive product cannot be added to a sale, but stays on past receipts.
+                    </span>
+                </div>
+            }
+        </div>
+
+        @if (form.UnitPrice > 0 && form.CostPrice > 0)
+        {
+            <div class="fc-alert fc-alert-info">
+                <Icon Name="info" Size="16" />
+                <div class="fc-alert-body">
+                    Margin of <strong class="fc-num">@((form.UnitPrice - form.CostPrice).ToString("N2"))</strong>
+                    per unit (@(((form.UnitPrice - form.CostPrice) / form.UnitPrice * 100).ToString("N1"))%).
+                </div>
+            </div>
+        }
+    </ChildContent>
+
+    <Footer>
+        <button class="fc-btn fc-btn-secondary" @onclick="CloseEditor" disabled="@isSaving">Cancel</button>
+        <button class="fc-btn fc-btn-success" @onclick="SaveAsync" disabled="@isSaving">
+            @if (isSaving)
+            {
+                <span class="fc-spinner is-sm"></span>
+            }
+            else
+            {
+                <Icon Name="check" Size="15" />
+            }
+            @(editingId is null ? "Create product" : "Save changes")
+        </button>
+    </Footer>
+</Modal>
+
+<Modal IsOpen="detail is not null" Title="@(detail?.ProductName ?? "")"
+       Subtitle="@detail?.ProductCode" OnClose="() => detail = null" CloseOnBackdropClick="true">
+    <ChildContent>
+        @if (detail is not null)
+        {
+            var stock = StockFor(detail.ProductId);
+            <dl class="fc-dl">
+                <dt>SKU</dt><dd>@detail.ProductCode</dd>
+                <dt>Category</dt><dd>@detail.Category</dd>
+                <dt>Cost price</dt><dd class="fc-num">@detail.CostPrice.ToString("N2")</dd>
+                <dt>Selling price</dt><dd class="fc-num">@detail.UnitPrice.ToString("N2")</dd>
+                <dt>Margin</dt><dd class="fc-num">@detail.Margin.ToString("N2")</dd>
+                <dt>Status</dt><dd><StatusBadge Status="@(detail.IsActive ? "Active" : "Inactive")" /></dd>
+                <dt>Added</dt><dd>@detail.CreatedAt.ToLocalTime().ToString("d MMM yyyy")</dd>
+                <dt>Last changed</dt>
+                <dd>
+                    @(detail.UpdatedAt.HasValue
+                        ? detail.UpdatedAt.Value.ToLocalTime().ToString("d MMM yyyy HH:mm")
+                        : "never edited")
+                </dd>
+
+                @if (stock is not null)
+                {
+                    <dt>On hand</dt><dd class="fc-num">@stock.QuantityOnHand.ToString("N2")</dd>
+                    <dt>Reorder level</dt><dd class="fc-num">@stock.ReorderLevel.ToString("N2")</dd>
+                    <dt>Stock status</dt><dd><StatusBadge Status="@stock.StockStatus" /></dd>
+                    <dt>Stock value</dt><dd class="fc-num">@stock.StockValue.ToString("N2")</dd>
+                }
+            </dl>
+        }
+    </ChildContent>
+
+    <Footer>
+        <button class="fc-btn fc-btn-secondary" @onclick="() => detail = null">Close</button>
+        <a class="fc-btn fc-btn-primary" href="fitcore/inventory">
+            <Icon Name="inventory" Size="15" /> Manage stock
+        </a>
+    </Footer>
+</Modal>
+
+<ConfirmDialog IsOpen="pendingDelete is not null"
+               Title="Delete this product?"
+               Message="@($"\"{pendingDelete?.ProductName}\" will be removed from the catalogue.")"
+               Warning="A product that appears on a past sale cannot be deleted, because that would break the receipt. Mark it inactive instead."
+               ConfirmText="Delete product"
+               IsBusy="isDeleting"
+               OnConfirm="ConfirmDeleteAsync"
+               OnCancel="() => pendingDelete = null" />
+
+@code {
+    private readonly List<PageHeader.Crumb> crumbs = new() { new("Operations"), new("Products") };
+
+    private List<ProductDto> products = new();
+    private List<InventoryDto> stock = new();
+    private List<string> categories = new();
+
+    private bool isLoading = true;
+    private string? pageError;
+
+    // Stock is looked up per row, so the sort selector reaches into the same lookup the
+    // column uses rather than a second copy of the number.
+    private TableState<ProductDto> table = null!;
+
+    private string searchTerm = "";
+    private string categoryFilter = "";
+    private string statusFilter = "";
+
+    private bool showEditor;
+    private int? editingId;
+    private UpdateProductDto form = new();
+    private decimal openingStock;
+    private decimal reorderLevel;
+    private string? formError;
+    private Dictionary<string, string> fieldErrors = new();
+    private bool isSaving;
+
+    private ProductDto? detail;
+    private ProductDto? pendingDelete;
+    private bool isDeleting;
+
+    protected override Task OnInitializedAsync()
+    {
+        table = new TableState<ProductDto>(defaultSort: "Product")
+            .Column("SKU", p => p.ProductCode)
+            .Column("Product", p => p.ProductName)
+            .Column("Category", p => p.Category)
+            .Column("Cost", p => p.CostPrice)
+            .Column("Price", p => p.UnitPrice)
+            .Column("Margin", p => p.Margin)
+            .Column("Stock", p => StockFor(p.ProductId)?.QuantityOnHand ?? -1m)
+            .Column("Status", p => p.IsActive);
+
+        return ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        isLoading = true;
+        pageError = null;
+
+        var productResult = await ProductApi.GetAllAsync();
+
+        if (productResult.IsSuccess)
+        {
+            products = productResult.Value ?? new();
+        }
+        else
+        {
+            pageError = productResult.ErrorMessage;
+        }
+
+        // Stock is read alongside so the catalogue can show the on-hand figure without a
+        // second page. Both come from the same tenant database.
+        var stockResult = await InventoryApi.GetAllAsync();
+        if (stockResult.IsSuccess) stock = stockResult.Value ?? new();
+
+        var categoryResult = await ProductApi.GetCategoriesAsync();
+        if (categoryResult.IsSuccess) categories = categoryResult.Value ?? new();
+
+        isLoading = false;
+    }
+
+    private InventoryDto? StockFor(int productId) => stock.FirstOrDefault(s => s.ProductId == productId);
+
+    private decimal AverageMargin
+    {
+        get
+        {
+            var priced = products.Where(p => p.UnitPrice > 0).ToList();
+            return priced.Count == 0 ? 0m : priced.Average(p => p.Margin);
+        }
+    }
+
+    private List<ProductDto> Filtered
+    {
+        get
+        {
+            IEnumerable<ProductDto> query = products;
+
+            if (!string.IsNullOrWhiteSpace(searchTerm))
+            {
+                var term = searchTerm.Trim();
+                query = query.Where(p =>
+                    p.ProductName.Contains(term, StringComparison.OrdinalIgnoreCase) ||
+                    p.ProductCode.Contains(term, StringComparison.OrdinalIgnoreCase));
+            }
+
+            if (!string.IsNullOrEmpty(categoryFilter))
+                query = query.Where(p => p.Category == categoryFilter);
+
+            query = statusFilter switch
+            {
+                "active" => query.Where(p => p.IsActive),
+                "inactive" => query.Where(p => !p.IsActive),
+                _ => query
+            };
+
+            return query.ToList();
+        }
+    }
+
+    /// <summary>The filtered catalogue, sorted and cut down to the page on screen.</summary>
+    private List<ProductDto> PageRows => table.Apply(Filtered);
+
+    private void OnSearchInput(ChangeEventArgs args) => searchTerm = args.Value?.ToString() ?? "";
+
+    private void ClearFilters()
+    {
+        searchTerm = "";
+        categoryFilter = "";
+        statusFilter = "";
+    }
+
+    private void OpenCreate()
+    {
+        editingId = null;
+        form = new UpdateProductDto { Category = "Other", IsActive = true };
+        openingStock = 0;
+        reorderLevel = 0;
+        fieldErrors = new();
+        formError = null;
+        showEditor = true;
+    }
+
+    private void OpenEdit(ProductDto product)
+    {
+        editingId = product.ProductId;
+        form = new UpdateProductDto
+        {
+            ProductCode = product.ProductCode,
+            ProductName = product.ProductName,
+            Category = string.IsNullOrWhiteSpace(product.Category) ? "Other" : product.Category,
+            CostPrice = product.CostPrice,
+            UnitPrice = product.UnitPrice,
+            IsActive = product.IsActive
+        };
+        fieldErrors = new();
+        formError = null;
+        showEditor = true;
+    }
+
+    private void CloseEditor()
+    {
+        showEditor = false;
+        editingId = null;
+        formError = null;
+    }
+
+    private string Invalid(string field) => fieldErrors.ContainsKey(field) ? "is-invalid" : "";
+
+    private bool Validate()
+    {
+        fieldErrors = new();
+
+        if (string.IsNullOrWhiteSpace(form.ProductCode))
+            fieldErrors[nameof(form.ProductCode)] = "A SKU is required.";
+
+        if (string.IsNullOrWhiteSpace(form.ProductName))
+            fieldErrors[nameof(form.ProductName)] = "A product name is required.";
+
+        if (form.CostPrice < 0)
+            fieldErrors[nameof(form.CostPrice)] = "Cost price cannot be negative.";
+
+        if (form.UnitPrice < 0)
+            fieldErrors[nameof(form.UnitPrice)] = "Selling price cannot be negative.";
+
+        return fieldErrors.Count == 0;
+    }
+
+    private async Task SaveAsync()
+    {
+        formError = null;
+
+        if (!Validate()) return;
+
+        isSaving = true;
+
+        bool succeeded;
+        string? message;
+
+        if (editingId is null)
+        {
+            var result = await ProductApi.CreateAsync(new CreateProductDto
+            {
+                ProductCode = form.ProductCode,
+                ProductName = form.ProductName,
+                Category = form.Category,
+                CostPrice = form.CostPrice,
+                UnitPrice = form.UnitPrice,
+                OpeningStock = openingStock,
+                ReorderLevel = reorderLevel
+            });
+
+            succeeded = result.IsSuccess;
+            message = result.ErrorMessage;
+        }
+        else
+        {
+            var result = await ProductApi.UpdateAsync(editingId.Value, form);
+            succeeded = result.IsSuccess;
+            message = result.ErrorMessage;
+        }
+
+        isSaving = false;
+
+        if (!succeeded)
+        {
+            formError = message;
+            return;
+        }
+
+        Toasts.Success($"\"{form.ProductName}\" was {(editingId is null ? "created" : "updated")}.");
+        CloseEditor();
+        await ReloadAsync();
+    }
+
+    private async Task ConfirmDeleteAsync()
+    {
+        if (pendingDelete is null) return;
+
+        isDeleting = true;
+        var result = await ProductApi.DeleteAsync(pendingDelete.ProductId);
+        isDeleting = false;
+
+        if (!result.IsSuccess)
+        {
+            pageError = result.ErrorMessage;
+            pendingDelete = null;
+            return;
+        }
+
+        Toasts.Success($"\"{pendingDelete.ProductName}\" was deleted.", "Product removed");
+        pendingDelete = null;
+        await ReloadAsync();
+    }
+}

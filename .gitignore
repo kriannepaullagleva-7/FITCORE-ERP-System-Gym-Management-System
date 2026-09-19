@@ -1,0 +1,29 @@
+## Build output
+[Bb]in/
+[Oo]bj/
+[Dd]ebug/
+[Rr]elease/
+*.user
+*.suo
+.vs/
+
+## Secrets - these files carry live database credentials and signing keys.
+## Populate them locally with: dotnet user-secrets  (see setup-secrets.ps1)
+ERP_api/appsettings.Development.json
+ERP_Project1/appsettings.MonsterASP.json
+_backup_preclaude/
+
+## Local scratch: screenshots, driver scripts and captured logs from manual testing
+_*.log
+_*.ps1
+_s[0-9].png
+shot_*.png
+v_*.png
+*.received.*
+
+## EF Core generated SQL scripts
+*.generated.sql
+
+## Filled-in secrets helper (contains real passwords once edited)
+setup-secrets.ps1
+*.backup

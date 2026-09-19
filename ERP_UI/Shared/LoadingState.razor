@@ -1,0 +1,30 @@
+@* Shown while a page is waiting on the API. *@
+
+@if (AsSkeleton)
+{
+    <div style="padding:1rem 1.125rem;">
+        @for (var i = 0; i < Rows; i++)
+        {
+            <div class="fc-skeleton" style="margin-bottom:.9rem; width:@(WidthFor(i))%;"></div>
+        }
+    </div>
+}
+else
+{
+    <div class="fc-loading">
+        <span class="fc-spinner"></span>
+        <span>@Message</span>
+    </div>
+}
+
+@code {
+    [Parameter] public string Message { get; set; } = "Loading…";
+
+    /// <summary>Draws shimmer bars instead of a spinner, which suits a table better.</summary>
+    [Parameter] public bool AsSkeleton { get; set; }
+
+    [Parameter] public int Rows { get; set; } = 5;
+
+    // Slightly uneven widths so the placeholder reads as rows of text, not a block.
+    private static int WidthFor(int index) => index % 3 switch { 0 => 96, 1 => 82, _ => 89 };
+}

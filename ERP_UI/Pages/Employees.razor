@@ -1,0 +1,543 @@
+@page "/fitcore/employees"
+@inject EmployeeApiService EmployeeApi
+@inject ToastService Toasts
+
+@*
+    Employees. The people here are what payroll runs against, and what sales, stock movements
+    and expenses are attributed to, so an employee with history is deactivated rather than
+    deleted.
+*@
+
+<PageTitle>Employees - FitCore ERP</PageTitle>
+
+<PageHeader Title="Employees"
+            Description="Your staff, their roles and the salary payroll is calculated from."
+            Crumbs="crumbs">
+    <Actions>
+        <button class="fc-btn fc-btn-secondary" @onclick="ReloadAsync" disabled="@isLoading">
+            <Icon Name="refresh" Size="15" /> Refresh
+        </button>
+        <button class="fc-btn fc-btn-primary" @onclick="OpenCreate">
+            <Icon Name="plus" Size="15" /> Add employee
+        </button>
+    </Actions>
+</PageHeader>
+
+<Alert Message="@pageError" Kind="error" OnDismiss="() => pageError = null" />
+
+<div class="fc-kpi-grid">
+    <StatCard Label="Total employees" Value="@employees.Count.ToString("N0")" Icon="employee" Tone="blue" />
+    <StatCard Label="Active" Value="@employees.Count(e => e.Status == "Active").ToString("N0")"
+              Icon="check" Tone="green" />
+    <StatCard Label="Departments" Value="@Departments.Count.ToString("N0")" Icon="building" Tone="slate" />
+    <StatCard Label="Monthly salary cost" Value="@ActiveSalaryCost.ToString("N2")"
+              Hint="Basic pay of active staff" Icon="money" Tone="blue" />
+</div>
+
+<div class="fc-filters">
+    <div class="fc-filter fc-filter-grow">
+        <label class="fc-label" for="emp-search">Search</label>
+        <div class="fc-search">
+            <Icon Name="search" Size="15" />
+            <input id="emp-search" class="fc-input" placeholder="Name, code, position or email"
+                   value="@searchTerm" @oninput="OnSearchInput" />
+        </div>
+    </div>
+
+    <div class="fc-filter">
+        <label class="fc-label" for="emp-dept">Department</label>
+        <select id="emp-dept" class="fc-select" @bind="departmentFilter">
+            <option value="">All departments</option>
+            @foreach (var department in Departments)
+            {
+                <option value="@department">@department</option>
+            }
+        </select>
+    </div>
+
+    <div class="fc-filter">
+        <label class="fc-label" for="emp-status">Status</label>
+        <select id="emp-status" class="fc-select" @bind="statusFilter">
+            <option value="">All statuses</option>
+            <option value="Active">Active</option>
+            <option value="Inactive">Inactive</option>
+            <option value="Terminated">Terminated</option>
+        </select>
+    </div>
+
+    <button class="fc-btn fc-btn-secondary" @onclick="ClearFilters">
+        <Icon Name="x" Size="14" /> Clear
+    </button>
+</div>
+
+<div class="fc-card">
+    <div class="fc-card-head">
+        <div>
+            <h3 class="fc-card-title">Staff list</h3>
+            <p class="fc-card-sub">Showing @Filtered.Count of @employees.Count employee(s)</p>
+        </div>
+    </div>
+
+    <div class="fc-card-body is-flush">
+        @if (isLoading)
+        {
+            <LoadingState AsSkeleton="true" Rows="5" />
+        }
+        else if (employees.Count == 0)
+        {
+            <EmptyState Title="No employees yet"
+                        Message="Add your staff so payroll can be run and transactions can be attributed to them."
+                        Icon="employee">
+                <Action>
+                    <button class="fc-btn fc-btn-primary" @onclick="OpenCreate">
+                        <Icon Name="plus" Size="15" /> Add the first employee
+                    </button>
+                </Action>
+            </EmptyState>
+        }
+        else if (Filtered.Count == 0)
+        {
+            <EmptyState Title="No employees match those filters" Icon="filter">
+                <Action>
+                    <button class="fc-btn fc-btn-secondary" @onclick="ClearFilters">Clear filters</button>
+                </Action>
+            </EmptyState>
+        }
+        else
+        {
+            <div class="fc-table-wrap">
+                <table class="fc-table">
+                    <thead>
+                        <tr>
+                            <SortableHeader State="table" Column="Code" Label="Code" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Column="Name" Label="Name" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Column="Position" Label="Position" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Column="Department" Label="Department" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Column="Contact" Label="Contact" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Column="Hired" Label="Hired" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Column="Salary" Label="Basic salary" CssClass="fc-right" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Column="Status" Label="Status" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Label="Actions" CssClass="fc-right" />
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var employee in PageRows)
+                        {
+                            <tr class="@(employee.Status == "Active" ? "" : "is-muted")">
+                                <td class="fc-id">@employee.EmployeeCode</td>
+                                <td class="fc-cell-strong">@employee.FullName</td>
+                                <td>@(string.IsNullOrWhiteSpace(employee.Position) ? "-" : employee.Position)</td>
+                                <td>
+                                    @if (string.IsNullOrWhiteSpace(employee.Department))
+                                    {
+                                        <span class="fc-muted">-</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="fc-chip">@employee.Department</span>
+                                    }
+                                </td>
+                                <td class="fc-small">
+                                    @(string.IsNullOrWhiteSpace(employee.Phone) ? "-" : employee.Phone)
+                                    <span class="fc-cell-sub">@(string.IsNullOrWhiteSpace(employee.Email) ? "" : employee.Email)</span>
+                                </td>
+                                <td class="fc-nowrap fc-small">@employee.HireDate.ToLocalTime().ToString("d MMM yyyy")</td>
+                                <td class="fc-right fc-num">@employee.BasicSalary.ToString("N2")</td>
+                                <td><StatusBadge Status="@employee.Status" /></td>
+                                <td class="fc-right">
+                                    <span class="fc-actions">
+                                        <button class="fc-act" title="View employee" @onclick="() => detail = employee">
+                                            <Icon Name="eye" Size="14" />
+                                        </button>
+                                        <button class="fc-act" title="Edit employee" @onclick="() => OpenEdit(employee)">
+                                            <Icon Name="edit" Size="14" />
+                                        </button>
+                                        <button class="fc-act is-danger" title="Delete employee"
+                                                @onclick="() => pendingDelete = employee">
+                                            <Icon Name="trash" Size="14" />
+                                        </button>
+                                    </span>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            <Pagination State="table" OnChanged="StateHasChanged" />
+        }
+    </div>
+</div>
+
+<Modal IsOpen="showEditor" Title="@(editingId is null ? "Add employee" : $"Edit {form.FirstName} {form.LastName}")"
+       Subtitle="Basic salary becomes the default when a payroll line is created."
+       OnClose="CloseEditor">
+    <ChildContent>
+        <Alert Message="@formError" Kind="error" />
+
+        <div class="fc-form-grid">
+            <div class="fc-field">
+                <label class="fc-label" for="emp-code">Employee code<span class="fc-req">*</span></label>
+                <input id="emp-code" class="fc-input @(Invalid(nameof(form.EmployeeCode)))" @bind="form.EmployeeCode"
+                       placeholder="e.g. EMP-001" />
+                @if (fieldErrors.TryGetValue(nameof(form.EmployeeCode), out var codeError))
+                {
+                    <span class="fc-error">@codeError</span>
+                }
+                else
+                {
+                    <span class="fc-hint">Must be unique within the gym.</span>
+                }
+            </div>
+
+            <div class="fc-field">
+                <label class="fc-label" for="emp-status-form">Status</label>
+                <select id="emp-status-form" class="fc-select" @bind="form.Status">
+                    <option value="Active">Active</option>
+                    <option value="Inactive">Inactive</option>
+                    <option value="Terminated">Terminated</option>
+                </select>
+            </div>
+
+            <div class="fc-field">
+                <label class="fc-label" for="emp-first">First name<span class="fc-req">*</span></label>
+                <input id="emp-first" class="fc-input @(Invalid(nameof(form.FirstName)))" @bind="form.FirstName" />
+                @if (fieldErrors.TryGetValue(nameof(form.FirstName), out var firstError))
+                {
+                    <span class="fc-error">@firstError</span>
+                }
+            </div>
+
+            <div class="fc-field">
+                <label class="fc-label" for="emp-last">Last name<span class="fc-req">*</span></label>
+                <input id="emp-last" class="fc-input @(Invalid(nameof(form.LastName)))" @bind="form.LastName" />
+                @if (fieldErrors.TryGetValue(nameof(form.LastName), out var lastError))
+                {
+                    <span class="fc-error">@lastError</span>
+                }
+            </div>
+
+            <div class="fc-field">
+                <label class="fc-label" for="emp-position">Position</label>
+                <input id="emp-position" class="fc-input" @bind="form.Position" placeholder="e.g. Front desk" />
+            </div>
+
+            <div class="fc-field">
+                <label class="fc-label" for="emp-department">Department</label>
+                <input id="emp-department" class="fc-input" @bind="form.Department" placeholder="e.g. Operations" />
+            </div>
+
+            <div class="fc-field">
+                <label class="fc-label" for="emp-phone">Phone</label>
+                <input id="emp-phone" class="fc-input" @bind="form.Phone" />
+            </div>
+
+            <div class="fc-field">
+                <label class="fc-label" for="emp-email">Email</label>
+                <input id="emp-email" type="email" class="fc-input @(Invalid(nameof(form.Email)))" @bind="form.Email" />
+                @if (fieldErrors.TryGetValue(nameof(form.Email), out var emailError))
+                {
+                    <span class="fc-error">@emailError</span>
+                }
+            </div>
+
+            <div class="fc-field">
+                <label class="fc-label" for="emp-hired">Hire date</label>
+                <input id="emp-hired" type="date" class="fc-input" @bind="form.HireDate" />
+            </div>
+
+            <div class="fc-field">
+                <label class="fc-label" for="emp-salary">Basic monthly salary</label>
+                <input id="emp-salary" type="number" min="0" step="0.01"
+                       class="fc-input @(Invalid(nameof(form.BasicSalary)))" @bind="form.BasicSalary" />
+                @if (fieldErrors.TryGetValue(nameof(form.BasicSalary), out var salaryError))
+                {
+                    <span class="fc-error">@salaryError</span>
+                }
+            </div>
+        </div>
+    </ChildContent>
+
+    <Footer>
+        <button class="fc-btn fc-btn-secondary" @onclick="CloseEditor" disabled="@isSaving">Cancel</button>
+        <button class="fc-btn fc-btn-success" @onclick="SaveAsync" disabled="@isSaving">
+            @if (isSaving)
+            {
+                <span class="fc-spinner is-sm"></span>
+            }
+            else
+            {
+                <Icon Name="check" Size="15" />
+            }
+            @(editingId is null ? "Create employee" : "Save changes")
+        </button>
+    </Footer>
+</Modal>
+
+<Modal IsOpen="detail is not null" Title="@(detail?.FullName ?? "")" Subtitle="@detail?.EmployeeCode"
+       OnClose="() => detail = null" CloseOnBackdropClick="true">
+    <ChildContent>
+        @if (detail is not null)
+        {
+            <dl class="fc-dl">
+                <dt>Code</dt><dd>@detail.EmployeeCode</dd>
+                <dt>Position</dt><dd>@(string.IsNullOrWhiteSpace(detail.Position) ? "-" : detail.Position)</dd>
+                <dt>Department</dt><dd>@(string.IsNullOrWhiteSpace(detail.Department) ? "-" : detail.Department)</dd>
+                <dt>Phone</dt><dd>@(string.IsNullOrWhiteSpace(detail.Phone) ? "-" : detail.Phone)</dd>
+                <dt>Email</dt><dd>@(string.IsNullOrWhiteSpace(detail.Email) ? "-" : detail.Email)</dd>
+                <dt>Hired</dt><dd>@detail.HireDate.ToLocalTime().ToString("d MMMM yyyy")</dd>
+                <dt>Basic salary</dt><dd class="fc-num">@detail.BasicSalary.ToString("N2")</dd>
+                <dt>Status</dt><dd><StatusBadge Status="@detail.Status" /></dd>
+            </dl>
+        }
+    </ChildContent>
+
+    <Footer>
+        <button class="fc-btn fc-btn-secondary" @onclick="() => detail = null">Close</button>
+        <a class="fc-btn fc-btn-primary" href="fitcore/payroll">
+            <Icon Name="payroll" Size="15" /> Payroll
+        </a>
+    </Footer>
+</Modal>
+
+<ConfirmDialog IsOpen="pendingDelete is not null"
+               Title="Delete this employee?"
+               Message="@($"{pendingDelete?.FullName} will be removed from the database.")"
+               Warning="An employee with payroll history cannot be deleted. Set their status to Terminated instead."
+               ConfirmText="Delete employee"
+               IsBusy="isDeleting"
+               OnConfirm="ConfirmDeleteAsync"
+               OnCancel="() => pendingDelete = null" />
+
+@code {
+    private readonly List<PageHeader.Crumb> crumbs = new() { new("Small Enterprise"), new("Employees") };
+
+    private List<EmployeeDto> employees = new();
+    private bool isLoading = true;
+    private string? pageError;
+
+    private readonly TableState<EmployeeDto> table =
+        new TableState<EmployeeDto>(defaultSort: "Code")
+            .Column("Code", e => e.EmployeeCode)
+            .Column("Name", e => e.FullName)
+            .Column("Position", e => e.Position)
+            .Column("Department", e => e.Department)
+            .Column("Contact", e => e.Phone)
+            .Column("Hired", e => e.HireDate)
+            .Column("Salary", e => e.BasicSalary)
+            .Column("Status", e => e.Status);
+
+    private string searchTerm = "";
+    private string departmentFilter = "";
+    private string statusFilter = "";
+
+    private bool showEditor;
+    private int? editingId;
+    private UpdateEmployeeDto form = new();
+    private string? formError;
+    private Dictionary<string, string> fieldErrors = new();
+    private bool isSaving;
+
+    private EmployeeDto? detail;
+    private EmployeeDto? pendingDelete;
+    private bool isDeleting;
+
+    protected override Task OnInitializedAsync() => ReloadAsync();
+
+    private async Task ReloadAsync()
+    {
+        isLoading = true;
+        pageError = null;
+
+        var result = await EmployeeApi.GetAllAsync();
+
+        if (result.IsSuccess)
+        {
+            employees = result.Value ?? new();
+        }
+        else
+        {
+            pageError = result.ErrorMessage;
+        }
+
+        isLoading = false;
+    }
+
+    private List<string> Departments => employees
+        .Where(e => !string.IsNullOrWhiteSpace(e.Department))
+        .Select(e => e.Department)
+        .Distinct()
+        .OrderBy(d => d)
+        .ToList();
+
+    private decimal ActiveSalaryCost =>
+        employees.Where(e => e.Status == "Active").Sum(e => e.BasicSalary);
+
+    private List<EmployeeDto> Filtered
+    {
+        get
+        {
+            IEnumerable<EmployeeDto> query = employees;
+
+            if (!string.IsNullOrWhiteSpace(searchTerm))
+            {
+                var term = searchTerm.Trim();
+                query = query.Where(e =>
+                    e.FullName.Contains(term, StringComparison.OrdinalIgnoreCase) ||
+                    e.EmployeeCode.Contains(term, StringComparison.OrdinalIgnoreCase) ||
+                    e.Position.Contains(term, StringComparison.OrdinalIgnoreCase) ||
+                    e.Email.Contains(term, StringComparison.OrdinalIgnoreCase));
+            }
+
+            if (!string.IsNullOrEmpty(departmentFilter))
+                query = query.Where(e => e.Department == departmentFilter);
+
+            if (!string.IsNullOrEmpty(statusFilter))
+                query = query.Where(e => e.Status == statusFilter);
+
+            return query.ToList();
+        }
+    }
+
+    /// <summary>The filtered staff list, sorted and cut down to the page on screen.</summary>
+    private List<EmployeeDto> PageRows => table.Apply(Filtered);
+
+    private void OnSearchInput(ChangeEventArgs args) => searchTerm = args.Value?.ToString() ?? "";
+
+    private void ClearFilters()
+    {
+        searchTerm = "";
+        departmentFilter = "";
+        statusFilter = "";
+    }
+
+    private void OpenCreate()
+    {
+        editingId = null;
+        form = new UpdateEmployeeDto { HireDate = DateTime.Today, Status = "Active" };
+        fieldErrors = new();
+        formError = null;
+        showEditor = true;
+    }
+
+    private void OpenEdit(EmployeeDto employee)
+    {
+        editingId = employee.EmployeeId;
+        form = new UpdateEmployeeDto
+        {
+            EmployeeCode = employee.EmployeeCode,
+            FirstName = employee.FirstName,
+            LastName = employee.LastName,
+            Position = employee.Position,
+            Department = employee.Department,
+            Phone = employee.Phone,
+            Email = employee.Email,
+            HireDate = employee.HireDate,
+            BasicSalary = employee.BasicSalary,
+            Status = employee.Status
+        };
+        fieldErrors = new();
+        formError = null;
+        showEditor = true;
+    }
+
+    private void CloseEditor()
+    {
+        showEditor = false;
+        editingId = null;
+        formError = null;
+    }
+
+    private string Invalid(string field) => fieldErrors.ContainsKey(field) ? "is-invalid" : "";
+
+    private bool Validate()
+    {
+        fieldErrors = new();
+
+        if (string.IsNullOrWhiteSpace(form.EmployeeCode))
+            fieldErrors[nameof(form.EmployeeCode)] = "An employee code is required.";
+
+        if (string.IsNullOrWhiteSpace(form.FirstName))
+            fieldErrors[nameof(form.FirstName)] = "A first name is required.";
+
+        if (string.IsNullOrWhiteSpace(form.LastName))
+            fieldErrors[nameof(form.LastName)] = "A last name is required.";
+
+        if (form.BasicSalary < 0)
+            fieldErrors[nameof(form.BasicSalary)] = "A salary cannot be negative.";
+
+        if (!string.IsNullOrWhiteSpace(form.Email) && !form.Email.Contains('@'))
+            fieldErrors[nameof(form.Email)] = "That does not look like a valid email address.";
+
+        return fieldErrors.Count == 0;
+    }
+
+    private async Task SaveAsync()
+    {
+        formError = null;
+
+        if (!Validate()) return;
+
+        isSaving = true;
+
+        bool succeeded;
+        string? message;
+
+        if (editingId is null)
+        {
+            var result = await EmployeeApi.CreateAsync(new CreateEmployeeDto
+            {
+                EmployeeCode = form.EmployeeCode,
+                FirstName = form.FirstName,
+                LastName = form.LastName,
+                Position = form.Position,
+                Department = form.Department,
+                Phone = form.Phone,
+                Email = form.Email,
+                HireDate = form.HireDate,
+                BasicSalary = form.BasicSalary
+            });
+
+            succeeded = result.IsSuccess;
+            message = result.ErrorMessage;
+        }
+        else
+        {
+            var result = await EmployeeApi.UpdateAsync(editingId.Value, form);
+            succeeded = result.IsSuccess;
+            message = result.ErrorMessage;
+        }
+
+        isSaving = false;
+
+        if (!succeeded)
+        {
+            formError = message;
+            return;
+        }
+
+        Toasts.Success($"{form.FirstName} {form.LastName} was {(editingId is null ? "added" : "updated")}.");
+        CloseEditor();
+        await ReloadAsync();
+    }
+
+    private async Task ConfirmDeleteAsync()
+    {
+        if (pendingDelete is null) return;
+
+        isDeleting = true;
+        var result = await EmployeeApi.DeleteAsync(pendingDelete.EmployeeId);
+        isDeleting = false;
+
+        if (!result.IsSuccess)
+        {
+            pageError = result.ErrorMessage;
+            pendingDelete = null;
+            return;
+        }
+
+        Toasts.Success($"{pendingDelete.FullName} was deleted.", "Employee removed");
+        pendingDelete = null;
+        await ReloadAsync();
+    }
+}

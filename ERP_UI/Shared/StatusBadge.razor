@@ -1,0 +1,23 @@
+@*
+    A status pill. The colour is derived from the status text in one place, so "Active",
+    "Paid" and "In Stock" look the same green everywhere in the application.
+*@
+
+<span class="fc-badge tone-@ToneFor(Status)">@(string.IsNullOrWhiteSpace(Status) ? "-" : Status)</span>
+
+@code {
+    [Parameter, EditorRequired] public string Status { get; set; } = "";
+
+    /// <summary>
+    /// Maps every status word the ERP uses onto one of the four semantic tones. Anything
+    /// unrecognised stays neutral rather than being given a misleading colour.
+    /// </summary>
+    public static string ToneFor(string? status) => (status ?? "").Trim().ToLowerInvariant() switch
+    {
+        "active" or "completed" or "paid" or "in stock" or "approved" => "green",
+        "expiring soon" or "low stock" or "pending" or "partially paid" or "draft" => "amber",
+        "expired" or "cancelled" or "failed" or "out of stock" or "unpaid" or "terminated" or "inactive" or "refunded" or "suspended" => "red",
+        "no plan" or "n/a" or "" => "slate",
+        _ => "blue"
+    };
+}

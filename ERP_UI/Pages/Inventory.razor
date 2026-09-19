@@ -1,0 +1,865 @@
+@page "/fitcore/inventory"
+@inject InventoryApiService InventoryApi
+@inject EmployeeApiService EmployeeApi
+@inject ToastService Toasts
+
+@*
+    Stock on hand and the ledger of everything that moved it.
+
+    Quantity is never edited directly. Every change goes through a stock-in, a stock-out or an
+    adjustment, each of which writes a movement row recording the balance before, the balance
+    after and who did it. Sales write their own movements from the server side, so the ledger
+    accounts for the whole of the difference.
+*@
+
+<PageTitle>Inventory - FitCore ERP</PageTitle>
+
+<PageHeader Title="Inventory"
+            Description="Stock levels, reorder points and the full movement ledger."
+            Crumbs="crumbs">
+    <Actions>
+        <a class="fc-btn fc-btn-secondary" href="fitcore/products">
+            <Icon Name="product" Size="15" /> Products
+        </a>
+        <button class="fc-btn fc-btn-secondary" @onclick="ReloadAsync" disabled="@isLoading">
+            <Icon Name="refresh" Size="15" /> Refresh
+        </button>
+    </Actions>
+</PageHeader>
+
+<Alert Message="@pageError" Kind="error" OnDismiss="() => pageError = null" />
+
+@if (summary is not null)
+{
+    <div class="fc-kpi-grid">
+        <StatCard Label="Total products" Value="@summary.TotalProducts.ToString("N0")"
+                  Hint="@($"{summary.ActiveProducts:N0} active")" Icon="product" Tone="blue" />
+        <StatCard Label="In stock" Value="@summary.InStock.ToString("N0")" Icon="check" Tone="green" />
+        <StatCard Label="Low stock" Value="@summary.LowStock.ToString("N0")"
+                  Hint="At or below reorder level" Icon="alert"
+                  Tone="@(summary.LowStock > 0 ? "amber" : "green")" />
+        <StatCard Label="Out of stock" Value="@summary.OutOfStock.ToString("N0")" Icon="ban"
+                  Tone="@(summary.OutOfStock > 0 ? "red" : "green")" />
+        <StatCard Label="Stock value" Value="@summary.StockValue.ToString("N2")"
+                  Hint="@($"{summary.RetailValue:N2} at retail")" Icon="money" Tone="slate" />
+    </div>
+}
+
+@if (summary is not null && (summary.LowStock > 0 || summary.OutOfStock > 0))
+{
+    <div class="fc-alert fc-alert-warning">
+        <Icon Name="alert" Size="17" />
+        <div class="fc-alert-body">
+            <div class="fc-strong">Stock needs attention</div>
+            <div>
+                @summary.OutOfStock product(s) have run out and @summary.LowStock are at or below their
+                reorder level.
+                <button class="fc-btn fc-btn-ghost fc-btn-sm" @onclick="ShowLowStockOnly">
+                    Show them
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+<div class="fc-report-tabs">
+    <button class="fc-tab @(tab == Tab.Stock ? "active" : "")" @onclick="() => tab = Tab.Stock">
+        <Icon Name="inventory" Size="15" /> Stock on hand
+    </button>
+    <button class="fc-tab @(tab == Tab.Movements ? "active" : "")" @onclick="() => tab = Tab.Movements">
+        <Icon Name="reports" Size="15" /> Movement ledger
+    </button>
+</div>
+
+@if (tab == Tab.Stock)
+{
+    <div class="fc-filters">
+        <div class="fc-filter fc-filter-grow">
+            <label class="fc-label" for="stock-search">Search</label>
+            <div class="fc-search">
+                <Icon Name="search" Size="15" />
+                <input id="stock-search" class="fc-input" placeholder="Product or SKU"
+                       value="@searchTerm" @oninput="OnSearchInput" />
+            </div>
+        </div>
+
+        <div class="fc-filter">
+            <label class="fc-label" for="stock-category">Category</label>
+            <select id="stock-category" class="fc-select" @bind="categoryFilter">
+                <option value="">All categories</option>
+                @foreach (var category in rows.Select(r => r.Category).Distinct().OrderBy(c => c))
+                {
+                    <option value="@category">@category</option>
+                }
+            </select>
+        </div>
+
+        <div class="fc-filter">
+            <label class="fc-label" for="stock-status">Stock status</label>
+            <select id="stock-status" class="fc-select" @bind="stockFilter">
+                <option value="">All</option>
+                <option value="In Stock">In stock</option>
+                <option value="Low Stock">Low stock</option>
+                <option value="Out of Stock">Out of stock</option>
+            </select>
+        </div>
+
+        <button class="fc-btn fc-btn-secondary" @onclick="ClearFilters">
+            <Icon Name="x" Size="14" /> Clear
+        </button>
+    </div>
+
+    <div class="fc-card">
+        <div class="fc-card-head">
+            <div>
+                <h3 class="fc-card-title">Stock on hand</h3>
+                <p class="fc-card-sub">Showing @FilteredStock.Count of @rows.Count product(s)</p>
+            </div>
+        </div>
+
+        <div class="fc-card-body is-flush">
+            @if (isLoading)
+            {
+                <LoadingState AsSkeleton="true" Rows="6" />
+            }
+            else if (rows.Count == 0)
+            {
+                <EmptyState Title="Nothing in stock yet"
+                            Message="Add a product first; its stock record is created automatically."
+                            Icon="inventory">
+                    <Action>
+                        <a class="fc-btn fc-btn-primary" href="fitcore/products">
+                            <Icon Name="plus" Size="15" /> Add a product
+                        </a>
+                    </Action>
+                </EmptyState>
+            }
+            else if (FilteredStock.Count == 0)
+            {
+                <EmptyState Title="No products match those filters" Icon="filter">
+                    <Action>
+                        <button class="fc-btn fc-btn-secondary" @onclick="ClearFilters">Clear filters</button>
+                    </Action>
+                </EmptyState>
+            }
+            else
+            {
+                <div class="fc-table-wrap">
+                    <table class="fc-table">
+                        <thead>
+                            <tr>
+                                <SortableHeader State="stockTable" Column="Sku" Label="SKU" OnSorted="StateHasChanged" />
+                                <SortableHeader State="stockTable" Column="Product" Label="Product" OnSorted="StateHasChanged" />
+                                <SortableHeader State="stockTable" Column="Category" Label="Category" OnSorted="StateHasChanged" />
+                                <SortableHeader State="stockTable" Column="OnHand" Label="On hand" CssClass="fc-right" OnSorted="StateHasChanged" />
+                                <SortableHeader State="stockTable" Column="Reorder" Label="Reorder at" CssClass="fc-right" OnSorted="StateHasChanged" />
+                                <SortableHeader State="stockTable" Column="Status" Label="Status" OnSorted="StateHasChanged" />
+                                <SortableHeader State="stockTable" Column="Value" Label="Stock value" CssClass="fc-right" OnSorted="StateHasChanged" />
+                                <SortableHeader State="stockTable" Column="Updated" Label="Last movement" OnSorted="StateHasChanged" />
+                                <SortableHeader State="stockTable" Label="Actions" CssClass="fc-right" />
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var row in StockPageRows)
+                            {
+                                <tr>
+                                    <td class="fc-id">@row.ProductCode</td>
+                                    <td class="fc-cell-strong">@row.ProductName</td>
+                                    <td><span class="fc-chip">@row.Category</span></td>
+                                    <td class="fc-right fc-num fc-strong">@row.QuantityOnHand.ToString("N0")</td>
+                                    <td class="fc-right fc-num fc-muted">@row.ReorderLevel.ToString("N0")</td>
+                                    <td><StatusBadge Status="@row.StockStatus" /></td>
+                                    <td class="fc-right fc-num">@row.StockValue.ToString("N2")</td>
+                                    <td class="fc-small fc-nowrap">@row.LastUpdatedAt.ToLocalTime().ToString("d MMM, HH:mm")</td>
+                                    <td class="fc-right">
+                                        <span class="fc-actions">
+                                            <button class="fc-act" title="Stock in"
+                                                    @onclick="() => OpenMovement(row, MovementKind.In)">
+                                                <Icon Name="arrow-down" Size="14" />
+                                            </button>
+                                            <button class="fc-act" title="Stock out"
+                                                    @onclick="() => OpenMovement(row, MovementKind.Out)">
+                                                <Icon Name="arrow-up" Size="14" />
+                                            </button>
+                                            <button class="fc-act" title="Adjust to a counted quantity"
+                                                    @onclick="() => OpenMovement(row, MovementKind.Adjust)">
+                                                <Icon Name="edit" Size="14" />
+                                            </button>
+                                            <button class="fc-act" title="Set reorder level"
+                                                    @onclick="() => OpenReorder(row)">
+                                                <Icon Name="alert" Size="14" />
+                                            </button>
+                                            <button class="fc-act" title="Movement history"
+                                                    @onclick="() => ShowHistoryAsync(row)">
+                                                <Icon Name="eye" Size="14" />
+                                            </button>
+                                        </span>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                        <tfoot>
+                            <tr>
+                                <td colspan="3">Totals for the rows shown</td>
+                                <td class="fc-right fc-num">@FilteredStock.Sum(r => r.QuantityOnHand).ToString("N0")</td>
+                                <td colspan="2"></td>
+                                <td class="fc-right fc-num">@FilteredStock.Sum(r => r.StockValue).ToString("N2")</td>
+                                <td colspan="2"></td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                </div>
+
+                <Pagination State="stockTable" OnChanged="StateHasChanged" />
+            }
+        </div>
+    </div>
+}
+else
+{
+    <div class="fc-filters">
+        <div class="fc-filter fc-filter-grow">
+            <label class="fc-label" for="move-search">Search</label>
+            <div class="fc-search">
+                <Icon Name="search" Size="15" />
+                <input id="move-search" class="fc-input" placeholder="Product, reference or note"
+                       value="@movementSearch" @oninput="OnMovementSearchInput" />
+            </div>
+        </div>
+
+        <div class="fc-filter">
+            <label class="fc-label" for="move-type">Movement type</label>
+            <select id="move-type" class="fc-select" @bind="movementTypeFilter">
+                <option value="">All movements</option>
+                <option value="In">Stock in</option>
+                <option value="Out">Stock out</option>
+                <option value="Sale">Sale</option>
+                <option value="Adjustment">Adjustment</option>
+            </select>
+        </div>
+
+        <div class="fc-filter">
+            <label class="fc-label" for="move-from">From</label>
+            <input id="move-from" type="date" class="fc-input" @bind="movementFrom" />
+        </div>
+
+        <div class="fc-filter">
+            <label class="fc-label" for="move-to">To</label>
+            <input id="move-to" type="date" class="fc-input" @bind="movementTo" />
+        </div>
+
+        <button class="fc-btn fc-btn-secondary" @onclick="ClearMovementFilters">
+            <Icon Name="x" Size="14" /> Clear
+        </button>
+    </div>
+
+    <div class="fc-card">
+        <div class="fc-card-head">
+            <div>
+                <h3 class="fc-card-title">Movement ledger</h3>
+                <p class="fc-card-sub">
+                    Every change to stock, including the ones a sale made for you.
+                    Showing @FilteredMovements.Count of @movements.Count entries.
+                </p>
+            </div>
+        </div>
+
+        <div class="fc-card-body is-flush">
+            @if (isLoading)
+            {
+                <LoadingState AsSkeleton="true" Rows="6" />
+            }
+            else if (FilteredMovements.Count == 0)
+            {
+                <EmptyState Title="No movements recorded"
+                            Message="Stock in a product, or complete a sale, and the entry will appear here."
+                            Icon="reports" />
+            }
+            else
+            {
+                <div class="fc-table-wrap">
+                    <table class="fc-table">
+                        <thead>
+                            <tr>
+                                <SortableHeader State="moveTable" Column="Date" Label="Date" OnSorted="StateHasChanged" />
+                                <SortableHeader State="moveTable" Column="Product" Label="Product" OnSorted="StateHasChanged" />
+                                <SortableHeader State="moveTable" Column="Type" Label="Type" OnSorted="StateHasChanged" />
+                                <SortableHeader State="moveTable" Column="Quantity" Label="Quantity" CssClass="fc-right" OnSorted="StateHasChanged" />
+                                <SortableHeader State="moveTable" Column="Before" Label="Before" CssClass="fc-right" OnSorted="StateHasChanged" />
+                                <SortableHeader State="moveTable" Column="After" Label="After" CssClass="fc-right" OnSorted="StateHasChanged" />
+                                <SortableHeader State="moveTable" Column="Reference" Label="Reference" OnSorted="StateHasChanged" />
+                                <SortableHeader State="moveTable" Column="Staff" Label="Staff" OnSorted="StateHasChanged" />
+                                <SortableHeader State="moveTable" Column="Notes" Label="Notes" OnSorted="StateHasChanged" />
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var movement in MovementPageRows)
+                            {
+                                <tr>
+                                    <td class="fc-nowrap fc-small">@movement.MovementDate.ToLocalTime().ToString("d MMM yyyy HH:mm")</td>
+                                    <td>
+                                        <span class="fc-cell-strong">@movement.ProductName</span>
+                                        <span class="fc-cell-sub">@movement.ProductCode</span>
+                                    </td>
+                                    <td><span class="fc-badge tone-@MovementTone(movement.MovementType)">@movement.MovementType</span></td>
+                                    <td class="fc-right fc-num fc-strong @(IsIncrease(movement.MovementType) ? "fc-pos" : "fc-neg")">
+                                        @(IsIncrease(movement.MovementType) ? "+" : "-")@movement.Quantity.ToString("N0")
+                                    </td>
+                                    <td class="fc-right fc-num fc-muted">@movement.BalanceBefore.ToString("N0")</td>
+                                    <td class="fc-right fc-num">@movement.BalanceAfter.ToString("N0")</td>
+                                    <td class="fc-id">@(string.IsNullOrWhiteSpace(movement.Reference) ? "-" : movement.Reference)</td>
+                                    <td class="fc-small">@movement.RecordedByName</td>
+                                    <td class="fc-small fc-muted">@(string.IsNullOrWhiteSpace(movement.Notes) ? "-" : movement.Notes)</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+
+                <Pagination State="moveTable" OnChanged="StateHasChanged" />
+            }
+        </div>
+    </div>
+}
+
+<!-- ------------------------------------------------------------------ Movement dialog -->
+
+<Modal IsOpen="movementTarget is not null" Title="@MovementTitle"
+       Subtitle="@movementTarget?.ProductName" OnClose="CloseMovement">
+    <ChildContent>
+        <Alert Message="@formError" Kind="error" />
+
+        @if (movementTarget is not null)
+        {
+            <div class="fc-alert fc-alert-info">
+                <Icon Name="info" Size="16" />
+                <div class="fc-alert-body">
+                    Currently <strong class="fc-num">@movementTarget.QuantityOnHand.ToString("N0")</strong>
+                    on hand, reorder level <strong class="fc-num">@movementTarget.ReorderLevel.ToString("N0")</strong>.
+                </div>
+            </div>
+
+            <div class="fc-form-grid">
+                <div class="fc-field">
+                    <label class="fc-label" for="move-qty">
+                        @(movementKind == MovementKind.Adjust ? "Counted quantity" : "Quantity")<span class="fc-req">*</span>
+                    </label>
+                    <input id="move-qty" type="number" min="0" step="1" class="fc-input" @bind="movementQuantity" />
+                    @if (movementKind == MovementKind.Adjust)
+                    {
+                        <span class="fc-hint">
+                            The new balance. The difference is recorded as the adjustment.
+                        </span>
+                    }
+                </div>
+
+                @if (movementKind != MovementKind.Adjust)
+                {
+                    <div class="fc-field">
+                        <label class="fc-label" for="move-ref">Reference</label>
+                        <input id="move-ref" class="fc-input" @bind="movementReference"
+                               placeholder="@(movementKind == MovementKind.In ? "e.g. PO-1042" : "e.g. damaged")" />
+                    </div>
+                }
+
+                <div class="fc-field">
+                    <label class="fc-label" for="move-staff">Recorded by</label>
+                    <select id="move-staff" class="fc-select" @bind="movementEmployeeId">
+                        <option value="">- unassigned -</option>
+                        @foreach (var employee in employees)
+                        {
+                            <option value="@employee.EmployeeId">@employee.FullName</option>
+                        }
+                    </select>
+                    @if (employees.Count == 0)
+                    {
+                        <span class="fc-hint">Add employees to attribute stock movements to staff.</span>
+                    }
+                </div>
+
+                <div class="fc-field fc-span-2">
+                    <label class="fc-label" for="move-notes">
+                        @(movementKind == MovementKind.Adjust ? "Reason" : "Notes")
+                        @if (movementKind == MovementKind.Adjust)
+                        {
+                            <span class="fc-req">*</span>
+                        }
+                    </label>
+                    <textarea id="move-notes" class="fc-textarea" @bind="movementNotes"
+                              placeholder="@(movementKind == MovementKind.Adjust ? "Why the count differs, e.g. stocktake correction" : "Anything worth recording")"></textarea>
+                </div>
+            </div>
+
+            @if (movementKind == MovementKind.Adjust)
+            {
+                var delta = movementQuantity - movementTarget.QuantityOnHand;
+                <div class="fc-alert @(delta == 0 ? "fc-alert-info" : delta > 0 ? "fc-alert-success" : "fc-alert-warning")">
+                    <Icon Name="info" Size="16" />
+                    <div class="fc-alert-body">
+                        @if (delta == 0)
+                        {
+                            <text>No change: the counted quantity matches the recorded balance.</text>
+                        }
+                        else
+                        {
+                            <text>
+                                Stock will change by
+                                <strong class="fc-num">@(delta > 0 ? "+" : "")@delta.ToString("N0")</strong>,
+                                from @movementTarget.QuantityOnHand.ToString("N0") to @movementQuantity.ToString("N0").
+                            </text>
+                        }
+                    </div>
+                </div>
+            }
+        }
+    </ChildContent>
+
+    <Footer>
+        <button class="fc-btn fc-btn-secondary" @onclick="CloseMovement" disabled="@isSaving">Cancel</button>
+        <button class="fc-btn @(movementKind == MovementKind.Out ? "fc-btn-warning" : "fc-btn-success")"
+                @onclick="SaveMovementAsync" disabled="@isSaving">
+            @if (isSaving)
+            {
+                <span class="fc-spinner is-sm"></span>
+            }
+            else
+            {
+                <Icon Name="check" Size="15" />
+            }
+            @MovementAction
+        </button>
+    </Footer>
+</Modal>
+
+<!-- ------------------------------------------------------------------ Reorder level -->
+
+<Modal IsOpen="reorderTarget is not null" Title="Set reorder level"
+       Subtitle="@reorderTarget?.ProductName" Size="narrow" OnClose="() => reorderTarget = null">
+    <ChildContent>
+        <Alert Message="@formError" Kind="error" />
+
+        <div class="fc-field">
+            <label class="fc-label" for="reorder-level">Reorder level</label>
+            <input id="reorder-level" type="number" min="0" step="1" class="fc-input" @bind="reorderValue" />
+            <span class="fc-hint">
+                Stock at or below this is flagged as low on the dashboard, in the filters and
+                on the notification bell.
+            </span>
+        </div>
+    </ChildContent>
+
+    <Footer>
+        <button class="fc-btn fc-btn-secondary" @onclick="() => reorderTarget = null" disabled="@isSaving">Cancel</button>
+        <button class="fc-btn fc-btn-success" @onclick="SaveReorderAsync" disabled="@isSaving">
+            <Icon Name="check" Size="15" /> Save level
+        </button>
+    </Footer>
+</Modal>
+
+<!-- ------------------------------------------------------------------ Per-product history -->
+
+<Modal IsOpen="historyProduct is not null" Title="@($"Movement history - {historyProduct?.ProductName}")"
+       Size="wide" OnClose="() => historyProduct = null" CloseOnBackdropClick="true">
+    <ChildContent>
+        @if (isLoadingHistory)
+        {
+            <LoadingState Message="Reading the ledger…" />
+        }
+        else if (history.Count == 0)
+        {
+            <EmptyState Title="No movements for this product yet" Icon="reports" />
+        }
+        else
+        {
+            <div class="fc-table-wrap">
+                <table class="fc-table">
+                    <thead>
+                        <tr>
+                            <th>Date</th>
+                            <th>Type</th>
+                            <th class="fc-right">Quantity</th>
+                            <th class="fc-right">Before</th>
+                            <th class="fc-right">After</th>
+                            <th>Reference</th>
+                            <th>Staff</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var movement in history)
+                        {
+                            <tr>
+                                <td class="fc-nowrap fc-small">@movement.MovementDate.ToLocalTime().ToString("d MMM HH:mm")</td>
+                                <td><span class="fc-badge tone-@MovementTone(movement.MovementType)">@movement.MovementType</span></td>
+                                <td class="fc-right fc-num">@movement.Quantity.ToString("N0")</td>
+                                <td class="fc-right fc-num fc-muted">@movement.BalanceBefore.ToString("N0")</td>
+                                <td class="fc-right fc-num">@movement.BalanceAfter.ToString("N0")</td>
+                                <td class="fc-id">@(string.IsNullOrWhiteSpace(movement.Reference) ? "-" : movement.Reference)</td>
+                                <td class="fc-small">@movement.RecordedByName</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </ChildContent>
+
+    <Footer>
+        <button class="fc-btn fc-btn-secondary" @onclick="() => historyProduct = null">Close</button>
+    </Footer>
+</Modal>
+
+@code {
+    private readonly List<PageHeader.Crumb> crumbs = new() { new("Operations"), new("Inventory") };
+
+    private enum Tab { Stock, Movements }
+    private enum MovementKind { In, Out, Adjust }
+
+    private Tab tab = Tab.Stock;
+
+    private List<InventoryDto> rows = new();
+    private List<StockMovementDto> movements = new();
+    private List<EmployeeDto> employees = new();
+    private InventorySummaryDto? summary;
+
+    private bool isLoading = true;
+    private string? pageError;
+
+    // Whatever needs attention first: out of stock, then low, then the rest. Sorting by any
+    // column replaces that, which is the point of making it sortable.
+    private readonly TableState<InventoryDto> stockTable =
+        new TableState<InventoryDto>(defaultSort: "Status")
+            .Column("Sku", r => r.ProductCode)
+            .Column("Product", r => r.ProductName)
+            .Column("Category", r => r.Category)
+            .Column("OnHand", r => r.QuantityOnHand)
+            .Column("Reorder", r => r.ReorderLevel)
+            .Column("Status", r => r.StockStatus == "Out of Stock" ? 0 : r.StockStatus == "Low Stock" ? 1 : 2)
+            .Column("Value", r => r.StockValue)
+            .Column("Updated", r => r.LastUpdatedAt);
+
+    private readonly TableState<StockMovementDto> moveTable =
+        new TableState<StockMovementDto>(defaultSort: "Date", descending: true, pageSize: 25)
+            .Column("Date", m => m.MovementDate)
+            .Column("Product", m => m.ProductName)
+            .Column("Type", m => m.MovementType)
+            .Column("Quantity", m => m.Quantity)
+            .Column("Before", m => m.BalanceBefore)
+            .Column("After", m => m.BalanceAfter)
+            .Column("Reference", m => m.Reference)
+            .Column("Staff", m => m.RecordedByName)
+            .Column("Notes", m => m.Notes);
+
+    private string searchTerm = "";
+    private string categoryFilter = "";
+    private string stockFilter = "";
+
+    private string movementSearch = "";
+    private string movementTypeFilter = "";
+    private DateTime? movementFrom;
+    private DateTime? movementTo;
+
+    private InventoryDto? movementTarget;
+    private MovementKind movementKind = MovementKind.In;
+    private decimal movementQuantity;
+    private string movementReference = "";
+    private string movementNotes = "";
+    private string movementEmployeeId = "";
+
+    private InventoryDto? reorderTarget;
+    private decimal reorderValue;
+
+    private InventoryDto? historyProduct;
+    private List<StockMovementDto> history = new();
+    private bool isLoadingHistory;
+
+    private string? formError;
+    private bool isSaving;
+
+    protected override Task OnInitializedAsync() => ReloadAsync();
+
+    private async Task ReloadAsync()
+    {
+        isLoading = true;
+        pageError = null;
+
+        var stockResult = await InventoryApi.GetAllAsync();
+
+        if (stockResult.IsSuccess)
+        {
+            rows = stockResult.Value ?? new();
+        }
+        else
+        {
+            pageError = stockResult.ErrorMessage;
+        }
+
+        var summaryResult = await InventoryApi.GetSummaryAsync();
+        if (summaryResult.IsSuccess) summary = summaryResult.Value;
+
+        var movementResult = await InventoryApi.GetMovementsAsync(take: 300);
+        if (movementResult.IsSuccess) movements = movementResult.Value ?? new();
+
+        var employeeResult = await EmployeeApi.GetActiveAsync();
+        if (employeeResult.IsSuccess) employees = employeeResult.Value ?? new();
+
+        isLoading = false;
+    }
+
+    private List<InventoryDto> FilteredStock
+    {
+        get
+        {
+            IEnumerable<InventoryDto> query = rows;
+
+            if (!string.IsNullOrWhiteSpace(searchTerm))
+            {
+                var term = searchTerm.Trim();
+                query = query.Where(r =>
+                    r.ProductName.Contains(term, StringComparison.OrdinalIgnoreCase) ||
+                    r.ProductCode.Contains(term, StringComparison.OrdinalIgnoreCase));
+            }
+
+            if (!string.IsNullOrEmpty(categoryFilter))
+                query = query.Where(r => r.Category == categoryFilter);
+
+            if (!string.IsNullOrEmpty(stockFilter))
+                query = query.Where(r => r.StockStatus == stockFilter);
+
+            return query.ToList();
+        }
+    }
+
+    /// <summary>The filtered stock rows, sorted and cut down to the page on screen.</summary>
+    private List<InventoryDto> StockPageRows => stockTable.Apply(FilteredStock);
+
+    /// <summary>The filtered ledger entries, sorted and cut down to the page on screen.</summary>
+    private List<StockMovementDto> MovementPageRows => moveTable.Apply(FilteredMovements);
+
+    private List<StockMovementDto> FilteredMovements
+    {
+        get
+        {
+            IEnumerable<StockMovementDto> query = movements;
+
+            if (!string.IsNullOrWhiteSpace(movementSearch))
+            {
+                var term = movementSearch.Trim();
+                query = query.Where(m =>
+                    m.ProductName.Contains(term, StringComparison.OrdinalIgnoreCase) ||
+                    m.ProductCode.Contains(term, StringComparison.OrdinalIgnoreCase) ||
+                    m.Reference.Contains(term, StringComparison.OrdinalIgnoreCase) ||
+                    m.Notes.Contains(term, StringComparison.OrdinalIgnoreCase));
+            }
+
+            if (!string.IsNullOrEmpty(movementTypeFilter))
+                query = query.Where(m => m.MovementType == movementTypeFilter);
+
+            if (movementFrom.HasValue)
+                query = query.Where(m => m.MovementDate >= movementFrom.Value.Date);
+
+            if (movementTo.HasValue)
+                query = query.Where(m => m.MovementDate < movementTo.Value.Date.AddDays(1));
+
+            return query.ToList();
+        }
+    }
+
+    private void OnSearchInput(ChangeEventArgs args) => searchTerm = args.Value?.ToString() ?? "";
+
+    private void OnMovementSearchInput(ChangeEventArgs args) =>
+        movementSearch = args.Value?.ToString() ?? "";
+
+    private void ClearFilters()
+    {
+        searchTerm = "";
+        categoryFilter = "";
+        stockFilter = "";
+    }
+
+    private void ClearMovementFilters()
+    {
+        movementSearch = "";
+        movementTypeFilter = "";
+        movementFrom = null;
+        movementTo = null;
+    }
+
+    private void ShowLowStockOnly()
+    {
+        tab = Tab.Stock;
+        stockFilter = "Low Stock";
+        searchTerm = "";
+        categoryFilter = "";
+    }
+
+    private static bool IsIncrease(string movementType) => movementType == "In";
+
+    private static string MovementTone(string movementType) => movementType switch
+    {
+        "In" => "green",
+        "Out" => "amber",
+        "Sale" => "blue",
+        "Adjustment" => "slate",
+        _ => "slate"
+    };
+
+    private string MovementTitle => movementKind switch
+    {
+        MovementKind.In => "Stock in",
+        MovementKind.Out => "Stock out",
+        _ => "Adjust stock"
+    };
+
+    private string MovementAction => movementKind switch
+    {
+        MovementKind.In => "Add stock",
+        MovementKind.Out => "Remove stock",
+        _ => "Apply adjustment"
+    };
+
+    private void OpenMovement(InventoryDto row, MovementKind kind)
+    {
+        movementTarget = row;
+        movementKind = kind;
+        movementQuantity = kind == MovementKind.Adjust ? row.QuantityOnHand : 0m;
+        movementReference = "";
+        movementNotes = "";
+        movementEmployeeId = "";
+        formError = null;
+    }
+
+    private void CloseMovement()
+    {
+        movementTarget = null;
+        formError = null;
+    }
+
+    private int? SelectedEmployeeId =>
+        int.TryParse(movementEmployeeId, out var id) ? id : null;
+
+    private async Task SaveMovementAsync()
+    {
+        if (movementTarget is null) return;
+
+        formError = null;
+
+        if (movementKind != MovementKind.Adjust && movementQuantity <= 0)
+        {
+            formError = "Enter a quantity greater than zero.";
+            return;
+        }
+
+        if (movementKind == MovementKind.Adjust && movementQuantity < 0)
+        {
+            formError = "A counted quantity cannot be negative.";
+            return;
+        }
+
+        // An adjustment without a reason is untraceable later, so it is required here.
+        if (movementKind == MovementKind.Adjust && string.IsNullOrWhiteSpace(movementNotes))
+        {
+            formError = "Give a reason for the adjustment so the ledger explains itself.";
+            return;
+        }
+
+        if (movementKind == MovementKind.Out && movementQuantity > movementTarget.QuantityOnHand)
+        {
+            formError = $"There are only {movementTarget.QuantityOnHand:N0} units on hand.";
+            return;
+        }
+
+        isSaving = true;
+
+        var productId = movementTarget.ProductId;
+        var productName = movementTarget.ProductName;
+
+        ApiResult<InventoryDto> result;
+
+        if (movementKind == MovementKind.Adjust)
+        {
+            result = await InventoryApi.AdjustAsync(productId, new StockAdjustmentDto
+            {
+                NewQuantity = movementQuantity,
+                Notes = movementNotes,
+                RecordedByEmployeeId = SelectedEmployeeId
+            });
+        }
+        else
+        {
+            var request = new StockMovementRequestDto
+            {
+                Quantity = movementQuantity,
+                Reference = movementReference,
+                Notes = movementNotes,
+                RecordedByEmployeeId = SelectedEmployeeId
+            };
+
+            result = movementKind == MovementKind.In
+                ? await InventoryApi.StockInAsync(productId, request)
+                : await InventoryApi.StockOutAsync(productId, request);
+        }
+
+        isSaving = false;
+
+        if (!result.IsSuccess)
+        {
+            formError = result.ErrorMessage;
+            return;
+        }
+
+        Toasts.Success($"Stock updated for {productName}. Now {result.Value?.QuantityOnHand:N0} on hand.");
+        CloseMovement();
+        await ReloadAsync();
+    }
+
+    private void OpenReorder(InventoryDto row)
+    {
+        reorderTarget = row;
+        reorderValue = row.ReorderLevel;
+        formError = null;
+    }
+
+    private async Task SaveReorderAsync()
+    {
+        if (reorderTarget is null) return;
+
+        formError = null;
+
+        if (reorderValue < 0)
+        {
+            formError = "A reorder level cannot be negative.";
+            return;
+        }
+
+        isSaving = true;
+
+        var result = await InventoryApi.SetReorderLevelAsync(
+            reorderTarget.ProductId, new ReorderLevelDto { ReorderLevel = reorderValue });
+
+        isSaving = false;
+
+        if (!result.IsSuccess)
+        {
+            formError = result.ErrorMessage;
+            return;
+        }
+
+        Toasts.Success($"Reorder level for {reorderTarget.ProductName} set to {reorderValue:N0}.");
+        reorderTarget = null;
+        await ReloadAsync();
+    }
+
+    private async Task ShowHistoryAsync(InventoryDto row)
+    {
+        historyProduct = row;
+        isLoadingHistory = true;
+        history = new();
+
+        var result = await InventoryApi.GetMovementsAsync(row.ProductId, 200);
+
+        if (result.IsSuccess) history = result.Value ?? new();
+        else pageError = result.ErrorMessage;
+
+        isLoadingHistory = false;
+    }
+}

@@ -1,0 +1,186 @@
+@*
+    The sign-in screen.
+
+    Deliberately the only page in the application with no layout chrome: there is no sidebar
+    to draw yet, because what the sidebar contains is decided by who signs in here.
+
+    Nothing about a credential is decided in the browser. The form collects a username and a
+    password, posts them, and renders whatever the server says - which account names exist,
+    whether one is deactivated and what it may reach are all server-side facts.
+*@
+
+@page "/login"
+@layout EmptyLayout
+@inject AuthApiService Auth
+@inject NavigationManager Nav
+
+<PageTitle>Sign in &middot; FitCore ERP</PageTitle>
+
+<div class="fc-login">
+    <!-- Brand panel. Hidden below 900px so the card gets the whole screen on a phone. -->
+    <section class="fc-login-brand">
+        <div class="fc-login-brand-inner">
+            <div class="fc-login-logo">
+                <span class="fc-login-logo-mark"><Icon Name="dumbbell" Size="26" /></span>
+                <span>
+                    <span class="fc-login-logo-text">FitCore</span>
+                    <span class="fc-login-logo-sub">ERP System</span>
+                </span>
+            </div>
+
+            <h1 class="fc-login-headline">Run your gym, end to end.</h1>
+            <p class="fc-login-copy">
+                Memberships, sales, payments and stock in one place &mdash; with employees and
+                payroll for growing teams.
+            </p>
+
+            <ul class="fc-login-points">
+                <li><Icon Name="members" Size="16" /> Membership &amp; subscriptions</li>
+                <li><Icon Name="sales" Size="16" /> Point of sale &amp; payments</li>
+                <li><Icon Name="inventory" Size="16" /> Live stock control</li>
+                <li><Icon Name="payroll" Size="16" /> Employees &amp; payroll</li>
+            </ul>
+        </div>
+    </section>
+
+    <!-- Sign-in panel -->
+    <section class="fc-login-panel">
+        <div class="fc-login-card">
+            <div class="fc-login-card-head">
+                <h2>Welcome back</h2>
+                <p class="fc-muted">Sign in to your FitCore workspace.</p>
+            </div>
+
+            <EditForm Model="form" OnValidSubmit="SubmitAsync" class="fc-login-form">
+                <DataAnnotationsValidator />
+
+                @if (error is not null)
+                {
+                    <div class="fc-alert fc-alert-error" role="alert">
+                        <Icon Name="alert" Size="16" />
+                        <span>@error</span>
+                    </div>
+                }
+
+                <div class="fc-field">
+                    <label for="login-username">Username or email</label>
+                    <div class="fc-input-group">
+                        <span class="fc-input-icon"><Icon Name="user" Size="16" /></span>
+                        <InputText id="login-username" class="fc-input has-icon" @bind-Value="form.Username"
+                                   autocomplete="username" placeholder="e.g. admin"
+                                   disabled="@busy" />
+                    </div>
+                    <ValidationMessage For="() => form.Username" class="fc-field-error" />
+                </div>
+
+                <div class="fc-field">
+                    <label for="login-password">Password</label>
+                    <div class="fc-input-group">
+                        <span class="fc-input-icon"><Icon Name="lock" Size="16" /></span>
+                        <InputText id="login-password" class="fc-input has-icon has-trail"
+                                   type="@(showPassword ? "text" : "password")"
+                                   @bind-Value="form.Password" autocomplete="current-password"
+                                   placeholder="Your password" disabled="@busy" />
+                        <button type="button" class="fc-input-trail" @onclick="() => showPassword = !showPassword"
+                                aria-label="@(showPassword ? "Hide password" : "Show password")"
+                                title="@(showPassword ? "Hide password" : "Show password")" tabindex="-1">
+                            <Icon Name="@(showPassword ? "eye-off" : "eye")" Size="16" />
+                        </button>
+                    </div>
+                    <ValidationMessage For="() => form.Password" class="fc-field-error" />
+                </div>
+
+                <button type="submit" class="fc-btn fc-btn-primary fc-btn-block fc-btn-lg" disabled="@busy">
+                    @if (busy)
+                    {
+                        <span class="fc-spinner is-sm"></span>
+                        <span>Signing in&hellip;</span>
+                    }
+                    else
+                    {
+                        <Icon Name="logout" Size="16" />
+                        <span>Sign in</span>
+                    }
+                </button>
+            </EditForm>
+
+            <p class="fc-login-foot fc-xs fc-muted">
+                Forgotten your password? Ask a FitCore administrator to reset it from the
+                User Access screen.
+            </p>
+        </div>
+    </section>
+</div>
+
+@code {
+    private readonly LoginForm form = new();
+
+    private bool busy;
+    private bool showPassword;
+    private string? error;
+
+    /// <summary>
+    /// Where to go after signing in. Set by the route guard when somebody follows a deep link
+    /// while signed out, so they land where they were heading rather than on the dashboard.
+    /// </summary>
+    [SupplyParameterFromQuery(Name = "returnUrl")]
+    private string? ReturnUrl { get; set; }
+
+    protected override void OnInitialized()
+    {
+        // Somebody who is already signed in has no business on this page.
+        if (Auth.IsSignedIn)
+        {
+            Nav.NavigateTo(Destination(), replace: true);
+        }
+    }
+
+    private async Task SubmitAsync()
+    {
+        if (busy) return;
+
+        busy = true;
+        error = null;
+
+        try
+        {
+            var result = await Auth.LoginAsync(form.Username.Trim(), form.Password);
+
+            if (!result.IsSuccess)
+            {
+                // The API already phrases these for a person: a wrong credential, a
+                // deactivated account and an unreachable server read differently.
+                error = result.ErrorMessage ?? "Sign-in failed. Please try again.";
+                return;
+            }
+
+            Nav.NavigateTo(Destination(), replace: true);
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private string Destination()
+    {
+        if (string.IsNullOrWhiteSpace(ReturnUrl)) return "fitcore/dashboard";
+
+        // Only ever a path within this application; an absolute URL here would be an open
+        // redirect straight off the sign-in page.
+        return ReturnUrl.StartsWith('/') && !ReturnUrl.StartsWith("//")
+            ? ReturnUrl.TrimStart('/')
+            : "fitcore/dashboard";
+    }
+
+    private sealed class LoginForm
+    {
+        [System.ComponentModel.DataAnnotations.Required(
+            ErrorMessage = "Enter your username or email address.")]
+        public string Username { get; set; } = "";
+
+        [System.ComponentModel.DataAnnotations.Required(
+            ErrorMessage = "Enter your password.")]
+        public string Password { get; set; } = "";
+    }
+}

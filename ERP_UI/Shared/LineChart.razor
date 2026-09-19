@@ -1,0 +1,79 @@
+@*
+    A time series drawn as inline SVG.
+
+    There is no charting library and no JavaScript involved: the points come straight from
+    the API and are projected into a viewBox here. That keeps the chart honest - there is
+    nowhere for a placeholder value to hide - and keeps the payload small.
+*@
+
+@if (Points is null || Points.Count == 0)
+{
+    <EmptyState Title="No data in this period" Message="@EmptyMessage" Icon="trend-up" />
+}
+else
+{
+    <svg class="fc-chart" viewBox="0 0 640 220" preserveAspectRatio="none" role="img" aria-label="@Title">
+        @* Horizontal gridlines with their value labels. *@
+        @for (var i = 0; i <= GridLines; i++)
+        {
+            var y = PadTop + (PlotH * i / (double)GridLines);
+            var value = Max - (Max * i / GridLines);
+
+            <line class="fc-chart-grid" x1="@Svg.N(PadLeft)" y1="@Svg.N(y)"
+                  x2="@Svg.N(W - PadRight)" y2="@Svg.N(y)" />
+            @Svg.Text(PadLeft - 6, y + 3, Svg.Compact(value), anchor: "end")
+        }
+
+        @* Filled area under the line, then the line itself. *@
+        <polygon class="fc-chart-area" points="@AreaPoints" />
+        <polyline class="fc-chart-line" points="@LinePoints" />
+
+        @for (var i = 0; i < Points.Count; i++)
+        {
+            <circle class="fc-chart-dot" cx="@Svg.N(X(i))" cy="@Svg.N(Y(Points[i].Value))" r="3">
+                <title>@Points[i].Label: @Points[i].Value.ToString("N2")</title>
+            </circle>
+        }
+
+        @* Only every nth label is drawn, so a fortnight of days does not overlap. *@
+        @for (var i = 0; i < Points.Count; i++)
+        {
+            if (i % LabelEvery == 0 || i == Points.Count - 1)
+            {
+                @Svg.Text(X(i), H - 6, Points[i].Label)
+            }
+        }
+    </svg>
+}
+
+@code {
+    [Parameter] public List<TrendPointDto>? Points { get; set; }
+    [Parameter] public string Title { get; set; } = "Trend";
+    [Parameter] public string EmptyMessage { get; set; } = "Nothing was recorded in this date range.";
+
+    private const double W = 640;
+    private const double H = 220;
+    private const double PadLeft = 46;
+    private const double PadRight = 12;
+    private const double PadTop = 12;
+    private const double PadBottom = 26;
+    private const int GridLines = 4;
+
+    private double PlotW => W - PadLeft - PadRight;
+    private double PlotH => H - PadTop - PadBottom;
+
+    private decimal Max => Svg.Ceiling(Points is { Count: > 0 } ? Points.Max(p => p.Value) : 0m);
+
+    private int LabelEvery => Points is null || Points.Count <= 8 ? 1 : (int)Math.Ceiling(Points.Count / 7.0);
+
+    private double X(int index) =>
+        Points!.Count == 1 ? PadLeft + PlotW / 2 : PadLeft + (PlotW * index / (Points.Count - 1.0));
+
+    private double Y(decimal value) => PadTop + PlotH - (PlotH * (double)(value / Max));
+
+    private string LinePoints =>
+        string.Join(" ", Points!.Select((p, i) => $"{Svg.N(X(i))},{Svg.N(Y(p.Value))}"));
+
+    private string AreaPoints =>
+        $"{Svg.N(PadLeft)},{Svg.N(PadTop + PlotH)} {LinePoints} {Svg.N(X(Points!.Count - 1))},{Svg.N(PadTop + PlotH)}";
+}

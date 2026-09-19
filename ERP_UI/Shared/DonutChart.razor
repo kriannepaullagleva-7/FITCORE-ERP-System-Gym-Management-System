@@ -1,0 +1,84 @@
+@*
+    A proportional breakdown. Rendered as a donut with a legend that carries the actual
+    numbers, because a ring alone is hard to read a value off.
+*@
+
+@if (Slices is null || Slices.Count == 0 || Total <= 0)
+{
+    <EmptyState Title="Nothing to break down" Message="@EmptyMessage" Icon="reports" />
+}
+else
+{
+    <div style="display:flex; align-items:center; gap:1.25rem; flex-wrap:wrap;">
+        <svg width="168" height="168" viewBox="0 0 42 42" role="img" aria-label="@Title" style="flex:0 0 auto;">
+            <circle cx="21" cy="21" r="15.915" fill="none" stroke="var(--fc-line-soft)" stroke-width="5" />
+
+            @{
+                // Starts the first slice at twelve o'clock and walks backwards around the ring.
+                var offset = 25m;
+            }
+            @for (var i = 0; i < Slices.Count; i++)
+            {
+                var slice = Slices[i];
+                var percent = slice.Value / Total * 100m;
+
+                <circle cx="21" cy="21" r="15.915" fill="none" stroke="@Colour(i)" stroke-width="5"
+                        stroke-dasharray="@($"{Svg.N(percent)} {Svg.N(100m - percent)}")"
+                        stroke-dashoffset="@Svg.N(offset)">
+                    <title>@slice.Label: @slice.Value.ToString("N2") (@percent.ToString("N1")%)</title>
+                </circle>
+
+                offset -= percent;
+                if (offset < 0) offset += 100m;
+            }
+
+            @Svg.Text(21, 20.5, Svg.Compact(Total), cssClass: "",
+                      style: "font-size:5px; font-weight:700; fill:var(--fc-ink);")
+            @Svg.Text(21, 25, CentreLabel, cssClass: "",
+                      style: "font-size:2.6px; fill:var(--fc-muted);")
+        </svg>
+
+        <div style="flex:1 1 180px; min-width:0;">
+            @for (var i = 0; i < Slices.Count; i++)
+            {
+                var slice = Slices[i];
+                <div class="fc-meter-row">
+                    <span class="fc-legend-item">
+                        <span class="fc-legend-swatch" style="background:@Colour(i);"></span>
+                        @slice.Label
+                    </span>
+                    <span class="fc-num fc-strong">
+                        @(ShowCounts ? slice.Count.ToString("N0") : slice.Value.ToString("N2"))
+                    </span>
+                    <span class="fc-meter">
+                        <span class="fc-meter-fill"
+                              style="width:@Svg.N(slice.Value / Total * 100m)%; background:@Colour(i);"></span>
+                    </span>
+                </div>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public List<CategorySliceDto>? Slices { get; set; }
+    [Parameter] public string Title { get; set; } = "Breakdown";
+    [Parameter] public string CentreLabel { get; set; } = "total";
+    [Parameter] public string EmptyMessage { get; set; } = "There are no records to break down yet.";
+
+    /// <summary>Show the record count in the legend instead of the money value.</summary>
+    [Parameter] public bool ShowCounts { get; set; }
+
+    /// <summary>
+    /// A sequential blue ramp with accent hues for the status colours. Kept in a fixed order
+    /// so a category keeps the same colour every time the page is refreshed.
+    /// </summary>
+    private static readonly string[] Palette =
+    {
+        "#4d82de", "#2f5aa8", "#7aa5e8", "#1f9d63", "#c77b16", "#cc3b3b", "#5b6b83", "#9ec4f2"
+    };
+
+    private decimal Total => Slices?.Sum(s => s.Value) ?? 0m;
+
+    private static string Colour(int index) => Palette[index % Palette.Length];
+}

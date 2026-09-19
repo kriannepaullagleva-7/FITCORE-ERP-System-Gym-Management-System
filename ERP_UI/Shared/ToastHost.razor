@@ -1,0 +1,51 @@
+@*
+    Renders the toast stack. Placed once in MainLayout, so any page can raise a toast without
+    hosting anything itself.
+*@
+
+@implements IDisposable
+@inject ToastService Toasts
+
+<div class="fc-toasts">
+    @foreach (var toast in Toasts.Toasts)
+    {
+        <div class="fc-toast tone-@ToneClass(toast.Tone)" role="status">
+            <Icon Name="@IconFor(toast.Tone)" Size="17" />
+            <div class="fc-toast-body">
+                @if (!string.IsNullOrWhiteSpace(toast.Title))
+                {
+                    <div class="fc-toast-title">@toast.Title</div>
+                }
+                <div class="fc-small">@toast.Message</div>
+            </div>
+            <button type="button" class="fc-alert-close" @onclick="() => Toasts.Dismiss(toast.Id)"
+                    aria-label="Dismiss notification">
+                <Icon Name="x" Size="14" />
+            </button>
+        </div>
+    }
+</div>
+
+@code {
+    protected override void OnInitialized() => Toasts.OnChange += Refresh;
+
+    public void Dispose() => Toasts.OnChange -= Refresh;
+
+    private void Refresh() => InvokeAsync(StateHasChanged);
+
+    private static string ToneClass(ToastTone tone) => tone switch
+    {
+        ToastTone.Success => "green",
+        ToastTone.Error => "red",
+        ToastTone.Warning => "amber",
+        _ => "blue"
+    };
+
+    private static string IconFor(ToastTone tone) => tone switch
+    {
+        ToastTone.Success => "check",
+        ToastTone.Error => "alert",
+        ToastTone.Warning => "alert",
+        _ => "info"
+    };
+}

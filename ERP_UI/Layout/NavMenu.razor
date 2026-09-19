@@ -1,0 +1,73 @@
+@*
+    The main navigation.
+
+    Built from NavigationCatalogue and filtered by what the signed-in user may actually reach,
+    so a Staff account simply has no Small Enterprise section rather than a section full of
+    links that answer 403. Groups that end up empty are dropped entirely.
+
+    Hiding a link is presentation. The API enforces the same permission again on every
+    request, so a link that is not drawn is also a request that would be refused.
+*@
+
+@implements IDisposable
+@inject AuthApiService Auth
+
+<div class="fc-brand">
+    <span class="fc-brand-mark"><Icon Name="dumbbell" Size="17" /></span>
+    <span class="fc-brand-block">
+        <span class="fc-brand-text">FitCore</span>
+        <span class="fc-brand-sub">@TierLabel</span>
+    </span>
+</div>
+
+<nav class="fc-nav">
+    @foreach (var group in NavigationCatalogue.For(Auth.CurrentUser))
+    {
+        <div class="fc-nav-section">@group.Title</div>
+
+        @foreach (var entry in group.Entries)
+        {
+            <NavLink class="fc-nav-link" href="@entry.Href" Match="NavLinkMatch.Prefix"
+                     @onclick="OnNavigate" title="@entry.Label">
+                <Icon Name="@entry.Icon" Size="17" />
+                <span class="fc-nav-label">@entry.Label</span>
+            </NavLink>
+        }
+    }
+</nav>
+
+<div class="fc-sidebar-foot">
+    <button type="button" class="fc-nav-link is-signout" @onclick="SignOutAsync" title="Sign out">
+        <Icon Name="logout" Size="17" />
+        <span class="fc-nav-label">Sign out</span>
+    </button>
+</div>
+
+@code {
+    /// <summary>Raised when a link is clicked, so the shell can close the drawer on mobile.</summary>
+    [Parameter] public EventCallback OnNavigate { get; set; }
+
+    /// <summary>Raised when the user signs out, so the shell can hand over to the router.</summary>
+    [Parameter] public EventCallback OnSignOut { get; set; }
+
+    protected override void OnInitialized() => Auth.Changed += Redraw;
+
+    public void Dispose() => Auth.Changed -= Redraw;
+
+    private void Redraw() => InvokeAsync(StateHasChanged);
+
+    /// <summary>
+    /// Names the plan under the logo, so it is obvious which tenant you are working in - the
+    /// difference between a Micro and a Small workspace is otherwise only visible as two
+    /// missing menu entries.
+    /// </summary>
+    private string TierLabel => Auth.CurrentUser?.EnterpriseTier switch
+    {
+        "Small"  => "Small Enterprise",
+        "Medium" => "Medium Enterprise",
+        "Micro"  => "Micro Enterprise",
+        _        => "ERP System"
+    };
+
+    private async Task SignOutAsync() => await OnSignOut.InvokeAsync();
+}

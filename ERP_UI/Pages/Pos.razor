@@ -1,0 +1,570 @@
+@page "/fitcore/pos"
+@inject ProductApiService ProductApi
+@inject InventoryApiService InventoryApi
+@inject MemberApiService MemberApi
+@inject EmployeeApiService EmployeeApi
+@inject SaleApiService SaleApi
+@inject PaymentApiService PaymentApi
+@inject ToastService Toasts
+@inject NavigationManager Nav
+
+@*
+    The till.
+
+    Products are picked from the catalogue rather than typed, and the quantities are checked
+    against the stock actually on hand before the sale is sent. Prices shown here come from the
+    product records; the server re-reads them when it commits the sale, so what the browser
+    displays can never become what the customer is charged.
+
+    Committing the sale is a single server-side transaction: the sale, its lines and the stock
+    deductions all succeed or all roll back.
+*@
+
+<PageTitle>New Sale - FitCore ERP</PageTitle>
+
+<PageHeader Title="New Sale"
+            Description="Pick a member, add products, then confirm. Stock is deducted as the sale commits."
+            Crumbs="crumbs">
+    <Actions>
+        <a class="fc-btn fc-btn-secondary" href="fitcore/sales">
+            <Icon Name="sales" Size="15" /> All sales
+        </a>
+    </Actions>
+</PageHeader>
+
+<Alert Message="@pageError" Kind="error" OnDismiss="() => pageError = null" />
+
+@if (isLoading)
+{
+    <div class="fc-card"><LoadingState Message="Loading the catalogue…" /></div>
+}
+else
+{
+    <div class="fc-pos">
+        <!-- ---------------------------------------------------------- Catalogue -->
+        <div class="fc-stack">
+            <div class="fc-filters" style="margin-bottom:0;">
+                <div class="fc-filter fc-filter-grow">
+                    <label class="fc-label" for="pos-search">Find a product</label>
+                    <div class="fc-search">
+                        <Icon Name="search" Size="15" />
+                        <input id="pos-search" class="fc-input" placeholder="Name or SKU"
+                               value="@searchTerm" @oninput="OnSearchInput" />
+                    </div>
+                </div>
+
+                <div class="fc-filter">
+                    <label class="fc-label" for="pos-category">Category</label>
+                    <select id="pos-category" class="fc-select" @bind="categoryFilter">
+                        <option value="">All categories</option>
+                        @foreach (var category in stock.Select(s => s.Category).Distinct().OrderBy(c => c))
+                        {
+                            <option value="@category">@category</option>
+                        }
+                    </select>
+                </div>
+
+                <div class="fc-filter">
+                    <label class="fc-check" style="margin-bottom:.4rem;">
+                        <input type="checkbox" @bind="hideUnavailable" />
+                        <span>Hide unavailable</span>
+                    </label>
+                </div>
+            </div>
+
+            <div class="fc-card">
+                <div class="fc-card-head">
+                    <div>
+                        <h3 class="fc-card-title">Catalogue</h3>
+                        <p class="fc-card-sub">
+                            Tap a product to add it. The figure under each price is what is on hand.
+                        </p>
+                    </div>
+                </div>
+                <div class="fc-card-body">
+                    @if (Available.Count == 0)
+                    {
+                        <EmptyState Title="Nothing to sell here"
+                                    Message="Either no products match your search, or none are active with stock on hand."
+                                    Icon="product">
+                            <Action>
+                                <a class="fc-btn fc-btn-secondary" href="fitcore/products">
+                                    <Icon Name="plus" Size="15" /> Manage products
+                                </a>
+                            </Action>
+                        </EmptyState>
+                    }
+                    else
+                    {
+                        <div class="fc-pos-grid">
+                            @foreach (var item in Available)
+                            {
+                                var remaining = RemainingFor(item);
+                                <button type="button" class="fc-product-tile"
+                                        disabled="@(!item.IsActive || remaining <= 0)"
+                                        @onclick="() => AddToCart(item)">
+                                    <span class="fc-product-name">@item.ProductName</span>
+                                    <span class="fc-xs fc-muted">@item.ProductCode &middot; @item.Category</span>
+                                    <span class="fc-product-price">@item.UnitPrice.ToString("N2")</span>
+                                    @if (!item.IsActive)
+                                    {
+                                        <span class="fc-badge tone-slate">inactive</span>
+                                    }
+                                    else if (remaining <= 0)
+                                    {
+                                        <span class="fc-badge tone-red">none left</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="fc-xs fc-muted">@remaining.ToString("N0") available</span>
+                                    }
+                                </button>
+                            }
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+
+        <!-- ---------------------------------------------------------- Cart -->
+        <div class="fc-card" style="position:sticky; top:76px;">
+            <div class="fc-card-head">
+                <div>
+                    <h3 class="fc-card-title">Current sale</h3>
+                    <p class="fc-card-sub">@cart.Sum(l => l.Quantity) item(s) in the cart</p>
+                </div>
+                @if (cart.Count > 0)
+                {
+                    <button class="fc-btn fc-btn-ghost fc-btn-sm" @onclick="ClearCart">
+                        <Icon Name="trash" Size="14" /> Clear
+                    </button>
+                }
+            </div>
+
+            <div class="fc-card-body">
+                <div class="fc-field">
+                    <label class="fc-label" for="pos-member">Member<span class="fc-req">*</span></label>
+                    <select id="pos-member" class="fc-select @(memberError ? "is-invalid" : "")" @bind="memberId">
+                        <option value="0">Select a member…</option>
+                        @foreach (var member in members.OrderBy(m => m.FirstName))
+                        {
+                            <option value="@member.MemberId">@member.FirstName @member.LastName (#@member.MemberId)</option>
+                        }
+                    </select>
+                    @if (memberError)
+                    {
+                        <span class="fc-error">A sale must be attached to a member.</span>
+                    }
+                </div>
+
+                <div class="fc-field">
+                    <label class="fc-label" for="pos-cashier">Cashier</label>
+                    <select id="pos-cashier" class="fc-select" @bind="cashierId">
+                        <option value="">- unassigned -</option>
+                        @foreach (var employee in employees)
+                        {
+                            <option value="@employee.EmployeeId">@employee.FullName</option>
+                        }
+                    </select>
+                </div>
+
+                @if (cart.Count == 0)
+                {
+                    <EmptyState Title="The cart is empty"
+                                Message="Pick a product from the catalogue to start this sale."
+                                Icon="sales" />
+                }
+                else
+                {
+                    <div>
+                        @foreach (var line in cart)
+                        {
+                            <div class="fc-cart-line">
+                                <div>
+                                    <div class="fc-strong fc-small">@line.ProductName</div>
+                                    <div class="fc-xs fc-muted">
+                                        @line.UnitPrice.ToString("N2") each &middot; @line.ProductCode
+                                    </div>
+                                </div>
+                                <div class="fc-right">
+                                    <div class="fc-num fc-strong">@line.LineTotal.ToString("N2")</div>
+                                </div>
+                                <div class="fc-row">
+                                    <span class="fc-qty">
+                                        <button type="button" title="Reduce quantity"
+                                                @onclick="() => ChangeQuantity(line, -1)">&minus;</button>
+                                        <span>@line.Quantity</span>
+                                        <button type="button" title="Increase quantity"
+                                                disabled="@(line.Quantity >= line.OnHand)"
+                                                @onclick="() => ChangeQuantity(line, 1)">+</button>
+                                    </span>
+                                    @if (line.Quantity >= line.OnHand)
+                                    {
+                                        <span class="fc-xs fc-muted">all @line.OnHand.ToString("N0") in stock</span>
+                                    }
+                                </div>
+                                <div class="fc-right">
+                                    <button class="fc-act is-danger" title="Remove this line"
+                                            @onclick="() => RemoveLine(line)">
+                                        <Icon Name="trash" Size="13" />
+                                    </button>
+                                </div>
+                            </div>
+                        }
+                    </div>
+
+                    <div class="fc-field fc-mt">
+                        <label class="fc-label" for="pos-discount">Discount</label>
+                        <input id="pos-discount" type="number" min="0" step="0.01" class="fc-input"
+                               @bind="discount" @bind:event="oninput" />
+                        @if (discount > Subtotal)
+                        {
+                            <span class="fc-error">A discount cannot be more than the subtotal.</span>
+                        }
+                        else
+                        {
+                            <span class="fc-hint">An absolute amount off the subtotal, not a percentage.</span>
+                        }
+                    </div>
+
+                    <div class="fc-field">
+                        <label class="fc-label" for="pos-notes">Notes</label>
+                        <input id="pos-notes" class="fc-input" @bind="notes" placeholder="Optional" />
+                    </div>
+
+                    <div class="fc-totals fc-mt">
+                        <span>Subtotal</span>
+                        <span class="fc-num fc-right">@Subtotal.ToString("N2")</span>
+
+                        <span>Discount</span>
+                        <span class="fc-num fc-right">@(discount > 0 ? "-" + discount.ToString("N2") : "0.00")</span>
+
+                        <span class="fc-total-row">Total</span>
+                        <span class="fc-total-row fc-num fc-right">@Total.ToString("N2")</span>
+                    </div>
+
+                    <div class="fc-field fc-mt">
+                        <label class="fc-check">
+                            <input type="checkbox" @bind="collectPayment" />
+                            <span>Take payment now</span>
+                        </label>
+                    </div>
+
+                    @if (collectPayment)
+                    {
+                        <div class="fc-form-grid">
+                            <div class="fc-field">
+                                <label class="fc-label" for="pos-paid">Amount received</label>
+                                <input id="pos-paid" type="number" min="0" step="0.01" class="fc-input"
+                                       @bind="amountReceived" @bind:event="oninput" />
+                            </div>
+
+                            <div class="fc-field">
+                                <label class="fc-label" for="pos-method">Method</label>
+                                <select id="pos-method" class="fc-select" @bind="paymentMethod">
+                                    <option value="Cash">Cash</option>
+                                    <option value="Card">Card</option>
+                                    <option value="Transfer">Transfer</option>
+                                    <option value="Check">Check</option>
+                                    <option value="GCash">GCash</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        @if (amountReceived > 0 && amountReceived < Total)
+                        {
+                            <div class="fc-alert fc-alert-warning">
+                                <Icon Name="alert" Size="16" />
+                                <div class="fc-alert-body">
+                                    The sale will be <strong>Partially Paid</strong> with
+                                    <strong class="fc-num">@((Total - amountReceived).ToString("N2"))</strong>
+                                    outstanding.
+                                </div>
+                            </div>
+                        }
+                        else if (amountReceived > Total)
+                        {
+                            <div class="fc-alert fc-alert-error">
+                                <Icon Name="alert" Size="16" />
+                                <div class="fc-alert-body">
+                                    That is more than the sale total. Payments cannot exceed what is owed.
+                                </div>
+                            </div>
+                        }
+                    }
+                }
+            </div>
+
+            <div class="fc-card-foot">
+                <button class="fc-btn fc-btn-primary fc-btn-block" @onclick="ConfirmSaleAsync"
+                        disabled="@(cart.Count == 0 || isSaving || discount > Subtotal)">
+                    @if (isSaving)
+                    {
+                        <span class="fc-spinner is-sm"></span>
+                        <span>Committing…</span>
+                    }
+                    else
+                    {
+                        <Icon Name="check" Size="16" />
+                        <span>Confirm sale &middot; @Total.ToString("N2")</span>
+                    }
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private readonly List<PageHeader.Crumb> crumbs = new()
+    {
+        new("Operations"), new("Sales", "fitcore/sales"), new("New Sale")
+    };
+
+    /// <summary>
+    /// A staged line. OnHand is carried so the quantity stepper can stop at the stock that
+    /// actually exists rather than letting the user build a sale the server will reject.
+    /// </summary>
+    private class CartLine
+    {
+        public int ProductId { get; init; }
+        public string ProductCode { get; init; } = "";
+        public string ProductName { get; init; } = "";
+        public decimal UnitPrice { get; init; }
+        public decimal OnHand { get; init; }
+        public int Quantity { get; set; }
+        public decimal LineTotal => Quantity * UnitPrice;
+    }
+
+    private List<InventoryDto> stock = new();
+    private List<MemberDto> members = new();
+    private List<EmployeeDto> employees = new();
+    private readonly List<CartLine> cart = new();
+
+    private bool isLoading = true;
+    private bool isSaving;
+    private string? pageError;
+
+    private string searchTerm = "";
+    private string categoryFilter = "";
+    private bool hideUnavailable = true;
+
+    private int memberId;
+    private string cashierId = "";
+    private bool memberError;
+    private decimal discount;
+    private string notes = "";
+
+    private bool collectPayment = true;
+    private decimal amountReceived;
+    private string paymentMethod = "Cash";
+
+    protected override async Task OnInitializedAsync()
+    {
+        isLoading = true;
+
+        // Stock is read rather than the plain product list, because the till needs to know
+        // what is on hand before it offers something for sale.
+        var stockResult = await InventoryApi.GetAllAsync();
+        if (stockResult.IsSuccess) stock = stockResult.Value ?? new();
+        else pageError = stockResult.ErrorMessage;
+
+        var memberResult = await MemberApi.GetAllAsync();
+        if (memberResult.IsSuccess) members = memberResult.Value ?? new();
+
+        var employeeResult = await EmployeeApi.GetActiveAsync();
+        if (employeeResult.IsSuccess) employees = employeeResult.Value ?? new();
+
+        isLoading = false;
+    }
+
+    private List<InventoryDto> Available
+    {
+        get
+        {
+            IEnumerable<InventoryDto> query = stock;
+
+            if (hideUnavailable)
+                query = query.Where(s => s.IsActive && s.QuantityOnHand > 0);
+
+            if (!string.IsNullOrWhiteSpace(searchTerm))
+            {
+                var term = searchTerm.Trim();
+                query = query.Where(s =>
+                    s.ProductName.Contains(term, StringComparison.OrdinalIgnoreCase) ||
+                    s.ProductCode.Contains(term, StringComparison.OrdinalIgnoreCase));
+            }
+
+            if (!string.IsNullOrEmpty(categoryFilter))
+                query = query.Where(s => s.Category == categoryFilter);
+
+            return query.OrderBy(s => s.ProductName).ToList();
+        }
+    }
+
+    private void OnSearchInput(ChangeEventArgs args) => searchTerm = args.Value?.ToString() ?? "";
+
+    /// <summary>What is left after accounting for whatever is already staged in the cart.</summary>
+    private decimal RemainingFor(InventoryDto item)
+    {
+        var staged = cart.FirstOrDefault(l => l.ProductId == item.ProductId)?.Quantity ?? 0;
+        return item.QuantityOnHand - staged;
+    }
+
+    private decimal Subtotal => cart.Sum(l => l.LineTotal);
+
+    private decimal Total => Math.Max(0m, Subtotal - discount);
+
+    private void AddToCart(InventoryDto item)
+    {
+        var existing = cart.FirstOrDefault(l => l.ProductId == item.ProductId);
+
+        if (existing is not null)
+        {
+            if (existing.Quantity < existing.OnHand) existing.Quantity++;
+        }
+        else
+        {
+            cart.Add(new CartLine
+            {
+                ProductId = item.ProductId,
+                ProductCode = item.ProductCode,
+                ProductName = item.ProductName,
+                UnitPrice = item.UnitPrice,
+                OnHand = item.QuantityOnHand,
+                Quantity = 1
+            });
+        }
+
+        SyncAmountReceived();
+    }
+
+    private void ChangeQuantity(CartLine line, int delta)
+    {
+        var next = line.Quantity + delta;
+
+        if (next <= 0)
+        {
+            cart.Remove(line);
+        }
+        else if (next <= line.OnHand)
+        {
+            line.Quantity = next;
+        }
+
+        SyncAmountReceived();
+    }
+
+    private void RemoveLine(CartLine line)
+    {
+        cart.Remove(line);
+        SyncAmountReceived();
+    }
+
+    private void ClearCart()
+    {
+        cart.Clear();
+        discount = 0;
+        notes = "";
+        SyncAmountReceived();
+    }
+
+    /// <summary>
+    /// Keeps the "amount received" box tracking the total while the cashier is still building
+    /// the sale, so the common case of paying in full needs no typing.
+    /// </summary>
+    private void SyncAmountReceived() => amountReceived = Total;
+
+    private async Task ConfirmSaleAsync()
+    {
+        pageError = null;
+        memberError = false;
+
+        if (memberId <= 0)
+        {
+            memberError = true;
+            pageError = "Select the member this sale belongs to.";
+            return;
+        }
+
+        if (cart.Count == 0)
+        {
+            pageError = "Add at least one product to the sale.";
+            return;
+        }
+
+        if (discount > Subtotal)
+        {
+            pageError = "The discount cannot be more than the subtotal.";
+            return;
+        }
+
+        if (collectPayment && amountReceived > Total)
+        {
+            pageError = "The amount received cannot be more than the sale total.";
+            return;
+        }
+
+        isSaving = true;
+
+        var saleResult = await SaleApi.CreateAsync(new CreateSaleDto
+        {
+            MemberId = memberId,
+            Items = cart
+                .Select(l => new CreateSaleItemDto { ProductId = l.ProductId, Quantity = l.Quantity })
+                .ToList(),
+            Discount = discount,
+            CashierEmployeeId = int.TryParse(cashierId, out var cashier) ? cashier : null,
+            Notes = notes
+        });
+
+        if (!saleResult.IsSuccess || saleResult.Value is null)
+        {
+            isSaving = false;
+            pageError = saleResult.ErrorMessage ?? "The sale could not be completed.";
+            return;
+        }
+
+        var sale = saleResult.Value;
+
+        // The sale itself is committed at this point. A payment failure below leaves a valid
+        // unpaid sale rather than rolling anything back, which is the correct outcome: the
+        // goods have left the shelf either way.
+        if (collectPayment && amountReceived > 0)
+        {
+            var paymentResult = await PaymentApi.RecordAsync(new RecordPaymentDto
+            {
+                MemberId = memberId,
+                SaleId = sale.SaleId,
+                Amount = amountReceived,
+                PaymentDate = DateTime.Today,
+                Method = paymentMethod,
+                Status = "Completed",
+                ReferenceNo = "",
+                Notes = ""
+            });
+
+            if (!paymentResult.IsSuccess)
+            {
+                isSaving = false;
+                Toasts.Warning(
+                    $"Sale #{sale.SaleId} was created, but the payment was not recorded: {paymentResult.ErrorMessage}",
+                    "Payment not recorded");
+
+                Nav.NavigateTo("fitcore/sales");
+                return;
+            }
+        }
+
+        isSaving = false;
+
+        var outstanding = collectPayment ? Total - amountReceived : Total;
+
+        Toasts.Success(
+            outstanding <= 0
+                ? $"Sale #{sale.SaleId} completed and fully paid. Stock has been deducted."
+                : $"Sale #{sale.SaleId} completed with {outstanding:N2} outstanding. Stock has been deducted.",
+            "Sale recorded");
+
+        Nav.NavigateTo("fitcore/sales");
+    }
+}
