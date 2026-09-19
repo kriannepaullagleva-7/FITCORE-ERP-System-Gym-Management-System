@@ -4,6 +4,7 @@ using ERP_infrastructure.data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -11,9 +12,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace ERP_infrastructure.Migrations.TenantErpDb
 {
     [DbContext(typeof(TenantErpDbContext))]
-    partial class TenantErpDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260919195855_TightenSchemaIntegrity")]
+    partial class TightenSchemaIntegrity
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder

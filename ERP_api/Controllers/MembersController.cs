@@ -97,11 +97,35 @@ namespace ERP_api.Controllers
                 MemberDeleteResult.Deleted => NoContent(),
                 MemberDeleteResult.HasHistory => Conflict(new
                 {
-                    message = "This member has subscriptions, payments or sales on record. " +
-                              "Set their status to Inactive instead of deleting them."
+                    message = "This member has subscriptions, payments or sales on record, " +
+                              "which would be lost. Archive them instead to keep their history.",
+                    canArchive = true
                 }),
                 _ => NotFound()
             };
+        }
+
+        /// <summary>
+        /// Retires a member while keeping everything they ever paid for. This is what a gym
+        /// actually wants when somebody stops coming: the person leaves the active list, and
+        /// last year's takings still add up.
+        /// </summary>
+        [HttpPost("{id:int}/archive")]
+        [ProducesResponseType(typeof(MemberDto), StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status404NotFound)]
+        public async Task<ActionResult<MemberDto>> Archive(int id)
+        {
+            var member = await _memberService.ArchiveMemberAsync(id);
+            return member is null ? NotFound() : Ok(member.ToDto());
+        }
+
+        [HttpPost("{id:int}/restore")]
+        [ProducesResponseType(typeof(MemberDto), StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status404NotFound)]
+        public async Task<ActionResult<MemberDto>> Restore(int id)
+        {
+            var member = await _memberService.RestoreMemberAsync(id);
+            return member is null ? NotFound() : Ok(member.ToDto());
         }
 
         // Sub-resources. These read through the owning module's service rather than reaching

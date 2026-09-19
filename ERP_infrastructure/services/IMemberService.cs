@@ -20,6 +20,12 @@ namespace ERP_infrastructure.services
         Task<Member> CreateMemberAsync(string firstName, string lastName, string phone, string email);
         Task<Member?> UpdateMemberAsync(int id, string firstName, string lastName, string phone, string email, string status);
         Task<MemberDeleteResult> DeleteMemberAsync(int id);
+
+        /// <summary>Retires a member without destroying their subscriptions or payments.</summary>
+        Task<Member?> ArchiveMemberAsync(int id);
+
+        /// <summary>Returns an archived member to active use.</summary>
+        Task<Member?> RestoreMemberAsync(int id);
         Task<MemberHistoryCounts> GetMemberHistoryCountsAsync(int id);
         Task<Member?> GetMemberWithSubscriptionsAsync(int memberId);
         Task<List<Member>> GetActiveMembersAsync();

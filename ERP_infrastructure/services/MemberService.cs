@@ -73,8 +73,15 @@ namespace ERP_infrastructure.services
             return await _repository.UpdateAsync(member);
         }
 
-        // Deleting a member cascades to their subscriptions, payments and sales, so a member
-        // with any history is refused here rather than quietly taking that history with them.
+        /// <summary>
+        /// Removes a member who has no history at all - a record created in error, a duplicate
+        /// typed twice. Anyone who has ever paid, subscribed or bought something is refused:
+        /// their takings have to stay reconcilable after they leave. The caller is expected to
+        /// offer <see cref="ArchiveMemberAsync"/> instead.
+        ///
+        /// The database enforces the same rule with a restricted foreign key, so a write that
+        /// bypasses this service still cannot erase financial history.
+        /// </summary>
         public async Task<MemberDeleteResult> DeleteMemberAsync(int id)
         {
             var member = await _repository.GetByIdAsync(id);
@@ -86,6 +93,43 @@ namespace ERP_infrastructure.services
             var deleted = await _repository.DeleteAsync(id);
             return deleted ? MemberDeleteResult.Deleted : MemberDeleteResult.NotFound;
         }
+
+        /// <summary>
+        /// Retires a member without touching their history: the row stays, their subscriptions
+        /// and payments stay, and they drop out of the active lists.
+        ///
+        /// This uses the Status column the application already filters on rather than a new
+        /// soft-delete flag, so no report, dashboard or revenue figure changes meaning. Archived
+        /// members are still counted in anything historical, which is the point.
+        /// </summary>
+        public async Task<Member?> ArchiveMemberAsync(int id)
+        {
+            var member = await _repository.GetByIdAsync(id);
+            if (member == null) return null;
+
+            if (string.Equals(member.Status, ArchivedStatus, StringComparison.OrdinalIgnoreCase))
+            {
+                return member;
+            }
+
+            member.Status = ArchivedStatus;
+            return await _repository.UpdateAsync(member);
+        }
+
+        /// <summary>
+        /// Returns an archived member to active use.
+        /// </summary>
+        public async Task<Member?> RestoreMemberAsync(int id)
+        {
+            var member = await _repository.GetByIdAsync(id);
+            if (member == null) return null;
+
+            member.Status = ActiveStatus;
+            return await _repository.UpdateAsync(member);
+        }
+
+        private const string ArchivedStatus = "Archived";
+        private const string ActiveStatus = "Active";
 
         public async Task<MemberHistoryCounts> GetMemberHistoryCountsAsync(int id)
         {

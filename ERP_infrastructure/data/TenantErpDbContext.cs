@@ -152,6 +152,7 @@ namespace ERP_infrastructure.data
             builder.ConfigureAuditEvents();
             ConfigureProducts(builder);
             ConfigureSuppliers(builder);
+            ConfigureCustomers(builder);
             ConfigureInventory(builder);
             ConfigureStockMovements(builder);
 
@@ -205,7 +206,7 @@ namespace ERP_infrastructure.data
                 entity.HasOne(x => x.Member)
                     .WithMany(x => x.Subscriptions)
                     .HasForeignKey(x => x.MemberId)
-                    .OnDelete(DeleteBehavior.Cascade);
+                    .OnDelete(DeleteBehavior.Restrict);
 
                 entity.HasOne(x => x.Plan)
                     .WithMany(x => x.Subscriptions)
@@ -228,7 +229,7 @@ namespace ERP_infrastructure.data
                 entity.HasOne(x => x.Member)
                     .WithMany(x => x.Sales)
                     .HasForeignKey(x => x.MemberId)
-                    .OnDelete(DeleteBehavior.Cascade);
+                    .OnDelete(DeleteBehavior.Restrict);
 
                 // Staff attribution is optional and must never block removing an employee,
                 // so the sale keeps its history with the cashier cleared.
@@ -274,12 +275,17 @@ namespace ERP_infrastructure.data
                 entity.Property(x => x.PaymentDate).IsRequired().HasDefaultValueSql("GETUTCDATE()");
                 entity.Property(x => x.CreatedAt).IsRequired().HasDefaultValueSql("GETUTCDATE()");
 
-                // Deleting a member clears their payment history. The subscription leg would form
-                // a second cascade path into Payments, which SQL Server rejects, so it is NoAction.
+                // A member cannot be deleted out from under their payment history: takings have
+                // to stay reconcilable after somebody leaves the gym. MemberService refuses the
+                // delete and offers to archive instead; this is the database saying the same
+                // thing, so a direct write cannot get around it.
+                //
+                // The subscription and sale legs stay NoAction to avoid multiple cascade paths
+                // into Payments, which SQL Server rejects. SaleService clears those links itself.
                 entity.HasOne(x => x.Member)
                     .WithMany(x => x.Payments)
                     .HasForeignKey(x => x.MemberId)
-                    .OnDelete(DeleteBehavior.Cascade);
+                    .OnDelete(DeleteBehavior.Restrict);
 
                 entity.HasOne(x => x.Subscription)
                     .WithMany(x => x.Payments)
@@ -324,6 +330,35 @@ namespace ERP_infrastructure.data
                 entity.HasKey(x => x.SupplierId);
                 entity.Property(x => x.SupplierCode).HasMaxLength(50).IsRequired();
                 entity.Property(x => x.SupplierName).HasMaxLength(200).IsRequired();
+                entity.Property(x => x.ContactPerson).HasMaxLength(150);
+                entity.Property(x => x.ContactNumber).HasMaxLength(30);
+                entity.Property(x => x.EmailAddress).HasMaxLength(200);
+                entity.Property(x => x.Address).HasMaxLength(300);
+                entity.Property(x => x.CreatedAt).IsRequired().HasDefaultValueSql("GETUTCDATE()");
+
+                // A supplier code identifies one supplier; two rows sharing it makes a purchase
+                // history impossible to attribute.
+                entity.HasIndex(x => x.SupplierCode).IsUnique();
+            });
+        }
+
+        /// <summary>
+        /// Customer had no configuration at all, so every string column was nvarchar(max) and
+        /// the code was not unique. Both are fixed here.
+        /// </summary>
+        private void ConfigureCustomers(ModelBuilder builder)
+        {
+            builder.Entity<Customer>(entity =>
+            {
+                entity.HasKey(x => x.CustomerId);
+                entity.Property(x => x.CustomerCode).HasMaxLength(50).IsRequired();
+                entity.Property(x => x.CustomerName).HasMaxLength(200).IsRequired();
+                entity.Property(x => x.ContactNumber).HasMaxLength(30);
+                entity.Property(x => x.EmailAddress).HasMaxLength(200);
+                entity.Property(x => x.Address).HasMaxLength(300);
+                entity.Property(x => x.CreatedAt).IsRequired().HasDefaultValueSql("GETUTCDATE()");
+
+                entity.HasIndex(x => x.CustomerCode).IsUnique();
             });
         }
 
