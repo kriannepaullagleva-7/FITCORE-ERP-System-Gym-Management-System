@@ -102,12 +102,24 @@ builder.Services.AddExceptionHandler<ApiExceptionHandler>();
 builder.Services.AddOpenApi();
 
 // ---------------------------------------------------------------------------------------
-// CORS. When Cors:AllowedOrigins is configured the policy is restricted to those origins and
-// credentials are permitted; otherwise it stays permissive, which is what the API did before.
+// CORS.
+//
+// A browser client sends its bearer token to this API from another origin, so the allowed
+// origins have to be named. Outside Development an empty list is a configuration mistake
+// rather than an instruction to allow everyone, and it stops the server the same way a
+// missing signing key does - an API that answers any origin with credentials enabled is
+// exactly the hole this policy exists to close.
 // ---------------------------------------------------------------------------------------
 var allowedOrigins = builder.Configuration
     .GetSection("Cors:AllowedOrigins")
     .Get<string[]>() ?? Array.Empty<string>();
+
+if (allowedOrigins.Length == 0 && !builder.Environment.IsDevelopment())
+{
+    throw new InvalidOperationException(
+        "Cors:AllowedOrigins is empty. Name the origins that may call this API " +
+        "(for example the deployed Blazor client's URL) before starting outside Development.");
+}
 
 builder.Services.AddCors(options =>
 {
@@ -122,6 +134,7 @@ builder.Services.AddCors(options =>
         }
         else
         {
+            // Development only, by the guard above: a local client on a shifting port.
             policy.AllowAnyOrigin()
                   .AllowAnyMethod()
                   .AllowAnyHeader();
