@@ -27,6 +27,17 @@ namespace ERP_infrastructure.data
             "ConnectionString", "CredentialKey", "Token", "RefreshToken", "Secret", "ApiKey"
         };
 
+        /// <summary>
+        /// Bookkeeping columns. An update that changes nothing but these is not an event: the
+        /// row was touched, but nothing happened that anybody would want to read about. Sign-in
+        /// stamps LastLoginAt, and would otherwise write an empty "system updated a user" row
+        /// beside every Login the trail already records properly.
+        /// </summary>
+        private static readonly HashSet<string> BookkeepingOnly = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "UpdatedAt", "LastLoginAt", "CreatedAt"
+        };
+
         /// <summary>Beyond this a value is truncated; nothing legitimate in this schema is near it.</summary>
         private const int MaxSerialisedLength = 4000;
 
@@ -119,6 +130,12 @@ namespace ERP_infrastructure.data
                         .ToList();
 
                     if (changed.Count == 0) return (null, null);
+
+                    // Nothing of substance moved, only the timestamps that every write touches.
+                    if (changed.All(p => BookkeepingOnly.Contains(p.Metadata.Name)))
+                    {
+                        return (null, null);
+                    }
 
                     return (
                         Serialise(changed.ToDictionary(p => p.Metadata.Name, p => p.OriginalValue)),

@@ -55,6 +55,14 @@ public sealed class ApiAuthorizationTests : IClassFixture<ApiAuthorizationTests.
             // the authorization filter, not about seeding.
             builder.UseSetting("Bootstrap:Enabled", "false");
 
+            // Points the master database at nothing reachable, with a one second timeout. Sign-in
+            // legitimately queries it, and these tests must not depend on a remote server being
+            // up - nor wait a minute to find out that it is not.
+            builder.UseSetting(
+                "ConnectionStrings:MasterErp",
+                "Server=tcp:127.0.0.1,1;Database=none;User Id=none;Password=none;" +
+                "Encrypt=False;Connect Timeout=1;");
+
             builder.UseSetting("Tenancy:DefaultCompanyId", "0");
             builder.UseSetting("Tenancy:AllowHeaderOverride", "false");
             builder.UseSetting("Tenancy:AllowConnectionStringFallback", "false");
@@ -163,13 +171,27 @@ public sealed class ApiAuthorizationTests : IClassFixture<ApiAuthorizationTests.
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
 
+    /// <summary>
+    /// Sign-in has to be reachable without a token, or nobody could ever get one.
+    ///
+    /// Rejected credentials also answer 401, so the status alone proves nothing. What
+    /// distinguishes them is which 401: the pipeline's "you are not signed in" challenge, or the
+    /// endpoint's own verdict on the credentials it was given. Only the second means the request
+    /// was let through.
+    /// </summary>
     [Fact]
     public async Task Sign_in_is_the_one_endpoint_that_does_not_require_a_token()
     {
         var response = await _factory.CreateClient()
             .PostAsJsonAsync("/api/auth/login", new { Username = "nobody", Password = "wrong" });
 
-        Assert.NotEqual(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.NotEqual(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.NotEqual(HttpStatusCode.NotFound, response.StatusCode);
+
+        var body = await response.Content.ReadAsStringAsync();
+
+        Assert.DoesNotContain("requires a signed-in FitCore user", body);
+        Assert.DoesNotContain("Not signed in", body);
     }
 
     // ------------------------------------------------------------------ the tier ceiling

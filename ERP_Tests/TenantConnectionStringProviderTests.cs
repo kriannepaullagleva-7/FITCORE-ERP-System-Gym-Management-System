@@ -1,3 +1,4 @@
+using Microsoft.Data.SqlClient;
 using ERP_infrastructure.services;
 using ERP_infrastructure.tenant;
 using Microsoft.Extensions.Configuration;
@@ -60,9 +61,63 @@ public class TenantConnectionStringProviderTests
         var result = await provider.GetConnectionAsync(7);
 
         Assert.False(result.UsedFallback);
-        Assert.Contains("Server=sql.example.net;", result.ConnectionString);
-        Assert.Contains("Database=tenant_a;", result.ConnectionString);
-        Assert.Contains("User Id=user_a;", result.ConnectionString);
+
+        // Parsed rather than string-matched, so this asserts what SqlClient will actually do
+        // with the string rather than how it happens to be spelled.
+        var built = new SqlConnectionStringBuilder(result.ConnectionString);
+
+        // The protocol and port are explicit: without them SqlClient can fall back to Named
+        // Pipes against a remote host and report the server as not found.
+        Assert.Equal("tcp:sql.example.net,1433", built.DataSource);
+        Assert.Equal("tenant_a", built.InitialCatalog);
+        Assert.Equal("user_a", built.UserID);
+        Assert.Equal("secret_a", built.Password);
+        Assert.True(built.MultipleActiveResultSets);
+    }
+
+    /// <summary>
+    /// A password from a hosting control panel can contain a semicolon or a quote. Concatenating
+    /// one into a connection string would end it early and silently connect somewhere else, or
+    /// fail in a way that looks like a wrong password.
+    /// </summary>
+    [Fact]
+    public async Task A_password_containing_connection_string_syntax_survives_intact()
+    {
+        const string awkward = "p;a\"s'w=o{rd}";
+
+        var provider = Create(
+            StubResolver.Returning("sql.example.net", "tenant_a", "KeyA"),
+            Config(("TenantCredentials:KeyA:UserId", "user_a"),
+                   ("TenantCredentials:KeyA:Password", awkward)),
+            new TenantOptions());
+
+        var result = await provider.GetConnectionAsync(7);
+
+        var built = new SqlConnectionStringBuilder(result.ConnectionString);
+
+        Assert.Equal(awkward, built.Password);
+        Assert.Equal("tenant_a", built.InitialCatalog);
+    }
+
+    /// <summary>
+    /// A registry row that already names a port or an instance is left alone rather than having
+    /// a second one bolted on.
+    /// </summary>
+    [Theory]
+    [InlineData("sql.example.net,1433")]
+    [InlineData("tcp:sql.example.net,1433")]
+    [InlineData("SQLHOST\\SQLEXPRESS")]
+    public async Task A_server_name_that_already_names_a_protocol_or_port_is_left_alone(string serverName)
+    {
+        var provider = Create(
+            StubResolver.Returning(serverName, "tenant_a", "KeyA"),
+            Config(("TenantCredentials:KeyA:UserId", "user_a"),
+                   ("TenantCredentials:KeyA:Password", "secret_a")),
+            new TenantOptions());
+
+        var result = await provider.GetConnectionAsync(7);
+
+        Assert.Equal(serverName, new SqlConnectionStringBuilder(result.ConnectionString).DataSource);
     }
 
     [Fact]

@@ -200,6 +200,29 @@ public sealed class AuditTrailTests : IDisposable
     /// A context built without an accessor - a migration, the desktop application, an existing
     /// fixture - must keep saving exactly as it did before.
     /// </summary>
+    /// <summary>
+    /// Every write touches UpdatedAt, and sign-in touches LastLoginAt. An update that changed
+    /// nothing else is not an event, and would otherwise pair an empty row with every entry the
+    /// trail already records properly.
+    /// </summary>
+    [Fact]
+    public async Task An_update_that_only_moves_timestamps_is_not_recorded()
+    {
+        var member = NewMember();
+        _context.Members.Add(member);
+        await _context.SaveChangesAsync();
+
+        _context.AuditEvents.RemoveRange(_context.AuditEvents);
+        await _context.SaveChangesAsync();
+
+        // Mark the row modified without changing anything a person would care about.
+        _context.Entry(member).Property(m => m.UpdatedAt).CurrentValue = DateTime.UtcNow;
+        _context.Entry(member).Property(m => m.UpdatedAt).IsModified = true;
+        await _context.SaveChangesAsync();
+
+        Assert.Empty(await _context.AuditEvents.ToListAsync());
+    }
+
     [Fact]
     public async Task Without_a_signed_in_user_nothing_is_recorded_and_the_save_still_works()
     {

@@ -53,6 +53,30 @@ namespace ERP_infrastructure.tenant
         public string FallbackConnectionStringName { get; set; } = "TenantErp";
 
         /// <summary>
+        /// Whether tenant connections negotiate TLS.
+        ///
+        /// This should be true, and is the right setting for any host that supports it. It is a
+        /// setting rather than a constant because the current shared hosting refuses an
+        /// encrypted connection, and an ERP that cannot reach its database is worse than one
+        /// reaching it in clear text on a trusted path. Turn it on as soon as the host allows,
+        /// and treat it as a deployment requirement rather than a preference.
+        /// </summary>
+        public bool EncryptTenantConnections { get; set; } = false;
+
+        /// <summary>
+        /// Accept the server's certificate without validating the chain. Only meaningful when
+        /// <see cref="EncryptTenantConnections"/> is on; shared hosting rarely presents a
+        /// certificate that chains to a public root.
+        /// </summary>
+        public bool TrustServerCertificate { get; set; } = true;
+
+        /// <summary>
+        /// Seconds to wait for a tenant database connection. The fifteen second default is not
+        /// always enough for shared hosting on a cold start.
+        /// </summary>
+        public int ConnectTimeoutSeconds { get; set; } = 60;
+
+        /// <summary>
         /// Whether the cross-tenant SaaS administration endpoints are reachable. These accept a
         /// company id in the URL, so they are the one place a caller can address another
         /// tenant. They are off unless explicitly enabled, and additionally require the Admin
