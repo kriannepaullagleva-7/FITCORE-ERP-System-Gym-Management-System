@@ -93,10 +93,16 @@ namespace ERP_infrastructure.data
 
                 // Stored as the underlying int. Existing rows predate the column, so the
                 // default keeps them on the tier they already behave as.
+                //
+                // The sentinel is stated explicitly because the enum deliberately starts at
+                // Micro = 1: zero is not a tier, it is "nobody set one", which is exactly
+                // when the database default should win. Without saying so, EF cannot tell a
+                // genuine value from an unset one and warns on every start-up.
                 entity.Property(x => x.EnterpriseTier)
                       .HasConversion<int>()
                       .IsRequired()
-                      .HasDefaultValue(EnterpriseTier.Micro);
+                      .HasDefaultValue(EnterpriseTier.Micro)
+                      .HasSentinel(default(EnterpriseTier));
             });
 
             builder.Entity<CompanyDatabase>(entity =>

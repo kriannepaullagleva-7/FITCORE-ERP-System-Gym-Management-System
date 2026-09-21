@@ -9,11 +9,22 @@ namespace ERP_infrastructure.services
         string RoleKey,
         int? CompanyId,
         string? IpAddress,
-        string? DeviceId)
+        string? DeviceId,
+        string FullName = "",
+        int? EmployeeId = null)
     {
         /// <summary>Work done by the server itself: the start-up bootstrapper, a migration, a test.</summary>
         public static readonly AuditActor System =
-            new(null, "system", "system", null, null, null);
+            new(null, "system", "system", null, null, null, "System", null);
+
+        /// <summary>
+        /// What a receipt should print. Prefers the person's name and falls back to the
+        /// sign-in name, so the line is never blank.
+        /// </summary>
+        public string DisplayName =>
+            !string.IsNullOrWhiteSpace(FullName) ? FullName
+            : !string.IsNullOrWhiteSpace(Username) ? Username
+            : "System";
     }
 
     /// <summary>

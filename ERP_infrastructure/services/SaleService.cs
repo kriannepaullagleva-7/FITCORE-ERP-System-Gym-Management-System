@@ -12,20 +12,35 @@ namespace ERP_infrastructure.services
         private readonly IProductRepository _productRepo;
         private readonly IPaymentRepository _paymentRepo;
         private readonly TenantErpDbContext _context;
+        private readonly ICurrentUserAccessor _actor;
 
         public SaleService(
             ISaleRepository saleRepo,
             IMemberRepository memberRepo,
             IProductRepository productRepo,
             IPaymentRepository paymentRepo,
-            TenantErpDbContext context)
+            TenantErpDbContext context,
+            ICurrentUserAccessor actor)
         {
             _saleRepo = saleRepo;
             _memberRepo = memberRepo;
             _productRepo = productRepo;
             _paymentRepo = paymentRepo;
             _context = context;
+            _actor = actor;
         }
+
+        /// <summary>
+        /// The payment methods the schema accepts. Mirrors PaymentService so a sale settled
+        /// at the till cannot write a method the Payments screen would then refuse to edit.
+        /// </summary>
+        private static readonly string[] SalePaymentMethods =
+            { "Cash", "Card", "Transfer", "Check", "GCash" };
+
+        private static string NormalisePaymentMethod(string? method) =>
+            SalePaymentMethods.FirstOrDefault(m =>
+                string.Equals(m, (method ?? "").Trim(), StringComparison.OrdinalIgnoreCase))
+            ?? "Cash";
 
         /// <summary>
         /// Works out where a sale stands against the money actually received for it.
@@ -159,7 +174,9 @@ namespace ERP_infrastructure.services
             List<SaleLineRequest> items,
             decimal discount = 0m,
             int? cashierEmployeeId = null,
-            string notes = "")
+            string notes = "",
+            bool settleNow = false,
+            string paymentMethod = "Cash")
         {
             if (items == null || items.Count == 0)
                 throw new InvalidOperationException("A sale needs at least one item.");
@@ -174,6 +191,18 @@ namespace ERP_infrastructure.services
                 !await _context.Employees.AnyAsync(e => e.EmployeeId == cashierEmployeeId.Value))
             {
                 throw new InvalidOperationException("The selected cashier is not a known employee.");
+            }
+
+            // Fall back to the signed-in user's own employee record so a till entry is
+            // attributed without anyone picking themselves off a list. Checked before use:
+            // the id comes from a token that may predate the employee being removed, and an
+            // unchecked value would fail against the foreign key mid-transaction.
+            var resolvedCashier = cashierEmployeeId;
+
+            if (resolvedCashier is null && _actor.Current.EmployeeId is int ownEmployeeId &&
+                await _context.Employees.AnyAsync(e => e.EmployeeId == ownEmployeeId))
+            {
+                resolvedCashier = ownEmployeeId;
             }
 
             // The same product added twice is merged so stock is checked against the real total.
@@ -192,13 +221,21 @@ namespace ERP_infrastructure.services
 
             try
             {
+                var actor = _actor.Current;
+
                 var sale = new Sale
                 {
                     MemberId = memberId,
                     SaleDate = DateTime.UtcNow,
                     CreatedAt = DateTime.UtcNow,
                     Status = "Completed",
-                    CashierEmployeeId = cashierEmployeeId,
+
+                    CashierEmployeeId = resolvedCashier,
+
+                    // Who actually rang it up, taken from the token rather than the request.
+                    ProcessedByUserId = actor.AppUserId,
+                    ProcessedBy = actor.DisplayName,
+
                     Notes = (notes ?? string.Empty).Trim(),
                     Items = new List<SaleItem>()
                 };
@@ -241,6 +278,29 @@ namespace ERP_infrastructure.services
                 // Stock only moves once the sale itself has an id to reference.
                 foreach (var line in merged)
                     await DeductStockAsync(line.ProductId, line.Quantity, sale.SaleId);
+
+                // Settling in the same transaction is what makes "a completed sale always has
+                // its money recorded" true rather than merely usual. Done here rather than by
+                // the caller making a second call, which could fail on its own and leave a
+                // paid-for sale looking unpaid.
+                if (settleNow && sale.TotalAmount > 0m)
+                {
+                    _context.Payments.Add(new Payment
+                    {
+                        MemberId = memberId,
+                        SaleId = sale.SaleId,
+                        Category = PaymentCategories.Sales,
+                        Amount = sale.TotalAmount,
+                        PaymentDate = sale.SaleDate,
+                        Method = NormalisePaymentMethod(paymentMethod),
+                        Status = "Completed",
+                        ReferenceNo = $"SALE-{sale.SaleId}",
+                        Notes = "Taken at the till with the sale.",
+                        ProcessedByUserId = actor.AppUserId,
+                        ProcessedBy = actor.DisplayName,
+                        CreatedAt = DateTime.UtcNow
+                    });
+                }
 
                 await _context.SaveChangesAsync();
                 await transaction.CommitAsync();

@@ -60,6 +60,20 @@ namespace ERP_api.Controllers
                 nameof(GetById), new { id = created.CustomerId }, created.ToDto());
         }
 
+        [HttpPut("{id:int}")]
+        [ProducesResponseType(typeof(CustomerDto), StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status404NotFound)]
+        public async Task<ActionResult<CustomerDto>> Update(
+            int id, [FromBody] UpdateCustomerDto dto)
+        {
+            var updated = await _customerService.UpdateCustomerAsync(
+                id, dto.CustomerCode, dto.CustomerName, dto.ContactNumber,
+                dto.EmailAddress, dto.Address, dto.IsActive);
+
+            return updated is null ? NotFound() : Ok(updated.ToDto());
+        }
+
         [HttpDelete("{id:int}")]
         [ProducesResponseType(StatusCodes.Status204NoContent)]
         [ProducesResponseType(StatusCodes.Status404NotFound)]

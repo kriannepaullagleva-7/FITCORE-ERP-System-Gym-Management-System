@@ -53,6 +53,21 @@ namespace ERP_infrastructure.tenant
         public string FallbackConnectionStringName { get; set; } = "TenantErp";
 
         /// <summary>
+        /// The single company the fallback connection string belongs to.
+        ///
+        /// Zero - the default - means the fallback is bound to no company and therefore never
+        /// applies, however <see cref="AllowConnectionStringFallback"/> is set.
+        ///
+        /// This binding exists because an unbound fallback is what pooled every tenant into one
+        /// database: when the CompanyDatabases rows were wrong, every company's lookup failed
+        /// and every company was handed the same default connection string, so Small-tier work
+        /// was written into the Micro tenant's database. A fallback that names its company can
+        /// still rescue the single-tenant deployment it was written for, but a second company
+        /// hitting the same failure now gets a 503 instead of another tenant's data.
+        /// </summary>
+        public int FallbackCompanyId { get; set; } = 0;
+
+        /// <summary>
         /// Whether tenant connections negotiate TLS.
         ///
         /// This should be true, and is the right setting for any host that supports it. It is a

@@ -1,0 +1,37 @@
+[
+  {
+    "Name": "FitCore Desktop (API + WinForms)",
+    "Projects": [
+      {
+        "Path": "ERP_api\\ERP_api.csproj",
+        "Action": "Start",
+        "DebugTarget": "https"
+      },
+      {
+        "Path": "ERP_Project1\\ERP_winforms.csproj",
+        "Action": "Start",
+        "DebugTarget": "ERP_winforms"
+      }
+    ]
+  },
+  {
+    "Name": "FitCore WinForms only",
+    "Projects": [
+      {
+        "Path": "ERP_Project1\\ERP_winforms.csproj",
+        "Action": "Start",
+        "DebugTarget": "ERP_winforms"
+      }
+    ]
+  },
+  {
+    "Name": "FitCore API only",
+    "Projects": [
+      {
+        "Path": "ERP_api\\ERP_api.csproj",
+        "Action": "Start",
+        "DebugTarget": "https"
+      }
+    ]
+  }
+]

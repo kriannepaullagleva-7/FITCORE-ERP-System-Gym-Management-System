@@ -46,7 +46,11 @@ namespace ERP_infrastructure.tenant
 
             return _cache.GetOrAdd(connectionString, cs =>
                 new DbContextOptionsBuilder<TenantErpDbContext>()
-                    .UseSqlServer(cs)
+                    // Single query is the right default against a remote database: the
+                    // collections loaded alongside a parent here are small, and one round
+                    // trip at this latency beats three. Saying so explicitly also stops EF
+                    // warning about it on every query that includes two collections.
+                    .UseSqlServer(cs, sql => sql.UseQuerySplittingBehavior(QuerySplittingBehavior.SingleQuery))
                     .UseLoggerFactory(_loggerFactory)
                     .Options);
         }

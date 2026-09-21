@@ -1,158 +1,174 @@
 using System.Drawing;
+using System.Drawing.Drawing2D;
 
 namespace ERP_Project1
 {
-    // Single source of truth for the FitCore palette and the control factories every
-    // module form uses, so the screens stay visually consistent.
+    /// <summary>
+    /// The FitCore design tokens: one palette, one type scale, one spacing rhythm.
+    ///
+    /// Every screen reads from here rather than choosing its own colours, which is what makes
+    /// the application look like a single ERP rather than a folder of forms. Nothing in this
+    /// file draws anything - the controls that use these tokens live in <see cref="UiKit"/>.
+    /// </summary>
     internal static class UiTheme
     {
-        public static readonly Color Primary = Color.FromArgb(77, 130, 222);
-        public static readonly Color PrimaryDark = Color.FromArgb(51, 109, 217);
-        public static readonly Color PaleBlue = Color.FromArgb(230, 237, 251);
-        public static readonly Color Canvas = Color.FromArgb(242, 247, 252);
-        public static readonly Color TextBlue = Color.FromArgb(0, 79, 216);
+        // ---------------------------------------------------------------- brand blues
 
-        public static readonly Color Success = Color.FromArgb(76, 175, 80);
-        public static readonly Color Warning = Color.FromArgb(255, 152, 0);
-        public static readonly Color Danger = Color.FromArgb(244, 67, 54);
-        public static readonly Color Neutral = Color.FromArgb(96, 125, 139);
+        /// <summary>Primary action colour. Buttons, active navigation, focus.</summary>
+        public static readonly Color Primary = Color.FromArgb(29, 78, 184);
+        public static readonly Color PrimaryDark = Color.FromArgb(21, 58, 142);
+        public static readonly Color PrimaryHover = Color.FromArgb(37, 93, 210);
+        public static readonly Color PrimarySoft = Color.FromArgb(234, 241, 253);
+        public static readonly Color PaleBlue = Color.FromArgb(234, 241, 253);
+        public static readonly Color TextBlue = Color.FromArgb(21, 58, 142);
 
-        public static Button CreateButton(string text, int x, int y, Color backColor, EventHandler handler, int width = 110, int height = 32)
+        /// <summary>The sidebar runs darker than the primary so the content reads as the subject.</summary>
+        public static readonly Color Navy = Color.FromArgb(16, 35, 68);
+        public static readonly Color NavyRaised = Color.FromArgb(24, 49, 91);
+        public static readonly Color NavyActive = Color.FromArgb(29, 78, 184);
+
+        // ---------------------------------------------------------------- surfaces
+
+        /// <summary>The page behind the cards.</summary>
+        public static readonly Color Canvas = Color.FromArgb(244, 247, 252);
+        public static readonly Color Surface = Color.White;
+        public static readonly Color SurfaceAlt = Color.FromArgb(249, 251, 254);
+        public static readonly Color Border = Color.FromArgb(223, 230, 240);
+        public static readonly Color BorderStrong = Color.FromArgb(203, 214, 229);
+
+        // ---------------------------------------------------------------- text
+
+        public static readonly Color TextPrimary = Color.FromArgb(21, 32, 48);
+        public static readonly Color TextSecondary = Color.FromArgb(88, 105, 129);
+        public static readonly Color TextMuted = Color.FromArgb(129, 145, 167);
+        public static readonly Color TextOnDark = Color.FromArgb(225, 234, 249);
+        public static readonly Color TextOnDarkMuted = Color.FromArgb(140, 166, 208);
+
+        // ---------------------------------------------------------------- status
+
+        public static readonly Color Success = Color.FromArgb(22, 137, 90);
+        public static readonly Color SuccessSoft = Color.FromArgb(226, 246, 237);
+        public static readonly Color Warning = Color.FromArgb(180, 108, 9);
+        public static readonly Color WarningSoft = Color.FromArgb(253, 243, 224);
+        public static readonly Color Danger = Color.FromArgb(190, 45, 45);
+        public static readonly Color DangerSoft = Color.FromArgb(253, 235, 234);
+        public static readonly Color Info = Color.FromArgb(29, 78, 184);
+        public static readonly Color InfoSoft = Color.FromArgb(234, 241, 253);
+        public static readonly Color Neutral = Color.FromArgb(96, 113, 134);
+        public static readonly Color NeutralSoft = Color.FromArgb(238, 242, 247);
+
+        // ---------------------------------------------------------------- type scale
+
+        public const string Family = "Segoe UI";
+        public const string FamilySemibold = "Segoe UI Semibold";
+
+        public static readonly Font PageTitle = new(FamilySemibold, 16.5F);
+        public static readonly Font SectionTitle = new(FamilySemibold, 11F);
+        public static readonly Font CardValue = new(FamilySemibold, 19F);
+        public static readonly Font Body = new(Family, 9.25F);
+        public static readonly Font BodyStrong = new(FamilySemibold, 9.25F);
+        public static readonly Font Small = new(Family, 8.5F);
+        public static readonly Font Label = new(FamilySemibold, 8.5F);
+        public static readonly Font Overline = new(FamilySemibold, 7.5F);
+        public static readonly Font Numeric = new("Segoe UI", 9.25F);
+
+        // ---------------------------------------------------------------- spacing
+
+        public const int SpaceXs = 4;
+        public const int SpaceS = 8;
+        public const int SpaceM = 14;
+        public const int SpaceL = 20;
+        public const int SpaceXl = 28;
+
+        public const int CornerRadius = 8;
+        public const int ControlHeight = 34;
+
+        // ---------------------------------------------------------------- drawing helpers
+
+        /// <summary>A rounded rectangle path, used for cards, buttons, badges and inputs.</summary>
+        public static GraphicsPath RoundedPath(Rectangle bounds, int radius)
         {
-            var button = new Button
+            var path = new GraphicsPath();
+
+            if (radius <= 0 || bounds.Width <= 0 || bounds.Height <= 0)
             {
-                Text = text,
-                Location = new Point(x, y),
-                Size = new Size(width, height),
-                BackColor = backColor,
-                ForeColor = Color.White,
-                Font = new Font("Segoe UI", 9, FontStyle.Bold),
-                FlatStyle = FlatStyle.Flat,
-                Cursor = Cursors.Hand
-            };
-            button.FlatAppearance.BorderSize = 0;
-            button.Click += handler;
-            return button;
+                path.AddRectangle(bounds);
+                return path;
+            }
+
+            var d = Math.Min(radius * 2, Math.Min(bounds.Width, bounds.Height));
+
+            path.AddArc(bounds.X, bounds.Y, d, d, 180, 90);
+            path.AddArc(bounds.Right - d, bounds.Y, d, d, 270, 90);
+            path.AddArc(bounds.Right - d, bounds.Bottom - d, d, d, 0, 90);
+            path.AddArc(bounds.X, bounds.Bottom - d, d, d, 90, 90);
+            path.CloseFigure();
+
+            return path;
         }
 
-        public static Label CreateLabel(string text, int x, int y, int width = 110, int height = 20)
+        /// <summary>Fills and outlines a rounded surface. The standard card treatment.</summary>
+        public static void PaintCard(Graphics g, Rectangle bounds, Color fill, Color? border = null,
+                                     int radius = CornerRadius)
         {
-            return new Label
+            if (bounds.Width <= 1 || bounds.Height <= 1) return;
+
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+
+            var r = new Rectangle(bounds.X, bounds.Y, bounds.Width - 1, bounds.Height - 1);
+            using var path = RoundedPath(r, radius);
+            using var brush = new SolidBrush(fill);
+            g.FillPath(brush, path);
+
+            if (border is not null)
             {
-                Text = text,
-                Location = new Point(x, y),
-                Size = new Size(width, height),
-                Font = new Font("Segoe UI", 9),
-                ForeColor = Color.FromArgb(55, 71, 79),
-                UseMnemonic = false
-            };
+                using var pen = new Pen(border.Value);
+                g.DrawPath(pen, path);
+            }
         }
 
-        public static Label CreateHeading(string text, int x, int y, int width = 300)
+        /// <summary>Rounds a control's own outline, so borders and corners agree.</summary>
+        public static void RoundControl(Control control, int radius = CornerRadius)
         {
-            return new Label
+            void Apply()
             {
-                Text = text,
-                Location = new Point(x, y),
-                Size = new Size(width, 26),
-                Font = new Font("Segoe UI", 12, FontStyle.Bold),
-                ForeColor = TextBlue,
-                UseMnemonic = false
-            };
+                if (control.Width <= 0 || control.Height <= 0) return;
+
+                using var path = RoundedPath(new Rectangle(0, 0, control.Width, control.Height), radius);
+                control.Region?.Dispose();
+                control.Region = new Region(path);
+            }
+
+            control.Resize += (_, _) => Apply();
+            Apply();
         }
 
-        public static DataGridView CreateGrid(int x, int y, int width, int height)
+        /// <summary>The soft/strong colour pair a status word should be drawn in.</summary>
+        public static (Color Fore, Color Back) StatusColours(string? status)
         {
-            var grid = new DataGridView
+            var value = (status ?? "").Trim().ToLowerInvariant();
+
+            return value switch
             {
-                Location = new Point(x, y),
-                Size = new Size(width, height),
-                BackgroundColor = Color.White,
-                BorderStyle = BorderStyle.FixedSingle,
-                AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill,
-                ReadOnly = true,
-                AllowUserToAddRows = false,
-                AllowUserToDeleteRows = false,
-                AllowUserToResizeRows = false,
-                MultiSelect = false,
-                SelectionMode = DataGridViewSelectionMode.FullRowSelect,
-                RowHeadersVisible = false,
-                AutoGenerateColumns = true
+                "active" or "completed" or "paid" or "in stock" or "approved" or "true"
+                    => (Success, SuccessSoft),
+
+                "pending" or "low stock" or "partially paid" or "draft" or "expiring soon" or "expiring"
+                    => (Warning, WarningSoft),
+
+                "inactive" or "cancelled" or "canceled" or "expired" or "failed" or "out of stock"
+                or "unpaid" or "suspended" or "terminated" or "refunded" or "voided" or "false"
+                    => (Danger, DangerSoft),
+
+                "archived" or "none" or "general" or "" => (Neutral, NeutralSoft),
+
+                // Payment categories. Coloured so a financial history can be scanned by what
+                // the money was for, not only read line by line.
+                "membership" => (Info, InfoSoft),
+                "sales" => (Success, SuccessSoft),
+
+                _ => (Info, InfoSoft)
             };
-
-            grid.EnableHeadersVisualStyles = false;
-            grid.ColumnHeadersDefaultCellStyle.BackColor = Primary;
-            grid.ColumnHeadersDefaultCellStyle.ForeColor = Color.White;
-            grid.ColumnHeadersDefaultCellStyle.Font = new Font("Segoe UI", 9, FontStyle.Bold);
-            grid.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing;
-            grid.ColumnHeadersHeight = 32;
-            grid.AlternatingRowsDefaultCellStyle.BackColor = PaleBlue;
-            grid.DefaultCellStyle.SelectionBackColor = PrimaryDark;
-            grid.DefaultCellStyle.SelectionForeColor = Color.White;
-
-            return grid;
-        }
-
-        // Module forms are docked into the shell, so their controls must be laid out by
-        // docking rather than anchors - anchor offsets are measured against the default
-        // 300x300 form size and would stretch the grids far past the visible area.
-        public static Panel CreateHeaderPanel(int height)
-        {
-            return new Panel
-            {
-                Dock = DockStyle.Top,
-                Height = height,
-                BackColor = Canvas
-            };
-        }
-
-        public static Panel CreateBodyPanel()
-        {
-            return new Panel
-            {
-                Dock = DockStyle.Fill,
-                BackColor = Canvas,
-                Padding = new Padding(16, 0, 16, 16)
-            };
-        }
-
-        // Shows a plain informational message. Every module now reads and writes the tenant
-        // database, so this is used for confirmations rather than to explain a preview.
-        public static void ShowInfo(string caption, string message)
-        {
-            MessageBox.Show(message, caption, MessageBoxButtons.OK, MessageBoxIcon.Information);
-        }
-
-        public static SplitContainer CreateSplit(double leftRatio)
-        {
-            var split = new SplitContainer
-            {
-                Dock = DockStyle.Fill,
-                SplitterWidth = 8,
-                BackColor = Canvas
-            };
-
-            // A SplitContainer rejects panel sizes that do not fit its current width, and
-            // while it is unparented that width is still the 150px default - setting a
-            // minimum size there drags SplitterDistance out of range and throws. Everything
-            // that depends on the real width is applied on the first layout pass instead.
-            var positioned = false;
-
-            split.SizeChanged += (_, _) =>
-            {
-                if (positioned) return;
-
-                var usable = split.Width - split.SplitterWidth;
-                if (usable < 420) return;
-
-                split.Panel1MinSize = 200;
-                split.Panel2MinSize = 180;
-                split.SplitterDistance = Math.Clamp((int)(usable * leftRatio), 200, usable - 180);
-
-                positioned = true;
-            };
-
-            return split;
         }
     }
 }

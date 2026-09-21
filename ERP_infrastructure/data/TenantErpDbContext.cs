@@ -226,6 +226,8 @@ namespace ERP_infrastructure.data
                 entity.Property(x => x.Status).HasMaxLength(20).IsRequired().HasDefaultValue("Completed");
                 entity.Property(x => x.Notes).HasMaxLength(300).IsRequired().HasDefaultValue("");
 
+                entity.Property(x => x.ProcessedBy).HasMaxLength(150).IsRequired().HasDefaultValue("");
+
                 entity.HasOne(x => x.Member)
                     .WithMany(x => x.Sales)
                     .HasForeignKey(x => x.MemberId)
@@ -272,6 +274,17 @@ namespace ERP_infrastructure.data
                 entity.Property(x => x.Status).HasMaxLength(20).IsRequired().HasDefaultValue("Completed");
                 entity.Property(x => x.ReferenceNo).HasMaxLength(60).IsRequired().HasDefaultValue("");
                 entity.Property(x => x.Notes).HasMaxLength(300).IsRequired().HasDefaultValue("");
+
+                // Rows written before this column existed default to General; the migration
+                // reclassifies them from what they are attached to.
+                entity.Property(x => x.Category)
+                      .HasMaxLength(20).IsRequired()
+                      .HasDefaultValue(PaymentCategories.General);
+
+                entity.Property(x => x.ProcessedBy).HasMaxLength(150).IsRequired().HasDefaultValue("");
+
+                // Reports group takings by what they settle.
+                entity.HasIndex(x => x.Category);
                 entity.Property(x => x.PaymentDate).IsRequired().HasDefaultValueSql("GETUTCDATE()");
                 entity.Property(x => x.CreatedAt).IsRequired().HasDefaultValueSql("GETUTCDATE()");
 
@@ -448,6 +461,8 @@ namespace ERP_infrastructure.data
                 entity.Property(x => x.NetPay).HasPrecision(18, 2);
                 entity.Property(x => x.Status).HasMaxLength(20).IsRequired().HasDefaultValue("Draft");
                 entity.Property(x => x.Notes).HasMaxLength(300).IsRequired().HasDefaultValue("");
+
+                entity.Property(x => x.ProcessedBy).HasMaxLength(150).IsRequired().HasDefaultValue("");
                 entity.Property(x => x.CreatedAt).IsRequired().HasDefaultValueSql("GETUTCDATE()");
 
                 // Deleting an employee would destroy their pay history, so it is blocked.

@@ -1,6 +1,7 @@
 @page "/fitcore/inventory"
 @inject InventoryApiService InventoryApi
 @inject EmployeeApiService EmployeeApi
+@inject AuthApiService Auth
 @inject ToastService Toasts
 
 @*
@@ -362,20 +363,25 @@ else
                     </div>
                 }
 
-                <div class="fc-field">
-                    <label class="fc-label" for="move-staff">Recorded by</label>
-                    <select id="move-staff" class="fc-select" @bind="movementEmployeeId">
-                        <option value="">- unassigned -</option>
-                        @foreach (var employee in employees)
+                @* Absent entirely on a tier without Employees: the list would always be empty
+                   and the hint would point at a screen that tier cannot reach. *@
+                @if (Auth.Can(Modules.Employees))
+                {
+                    <div class="fc-field">
+                        <label class="fc-label" for="move-staff">Recorded by</label>
+                        <select id="move-staff" class="fc-select" @bind="movementEmployeeId">
+                            <option value="">- unassigned -</option>
+                            @foreach (var employee in employees)
+                            {
+                                <option value="@employee.EmployeeId">@employee.FullName</option>
+                            }
+                        </select>
+                        @if (employees.Count == 0)
                         {
-                            <option value="@employee.EmployeeId">@employee.FullName</option>
+                            <span class="fc-hint">Add employees to attribute stock movements to staff.</span>
                         }
-                    </select>
-                    @if (employees.Count == 0)
-                    {
-                        <span class="fc-hint">Add employees to attribute stock movements to staff.</span>
-                    }
-                </div>
+                    </div>
+                }
 
                 <div class="fc-field fc-span-2">
                     <label class="fc-label" for="move-notes">
@@ -599,8 +605,14 @@ else
         var movementResult = await InventoryApi.GetMovementsAsync(take: 300);
         if (movementResult.IsSuccess) movements = movementResult.Value ?? new();
 
-        var employeeResult = await EmployeeApi.GetActiveAsync();
-        if (employeeResult.IsSuccess) employees = employeeResult.Value ?? new();
+        // Only ask for staff when this user's tier actually licenses Employees. A Micro tenant
+        // has no such module, so requesting it fired a 403 on every Inventory load. Attributing
+        // a movement to a member of staff is optional, so the picker is simply absent for them.
+        if (Auth.Can(Modules.Employees))
+        {
+            var employeeResult = await EmployeeApi.GetActiveAsync();
+            if (employeeResult.IsSuccess) employees = employeeResult.Value ?? new();
+        }
 
         isLoading = false;
     }

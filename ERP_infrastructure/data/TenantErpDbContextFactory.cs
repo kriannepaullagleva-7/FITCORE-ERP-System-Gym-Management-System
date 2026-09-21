@@ -11,11 +11,18 @@ namespace ERP_infrastructure.data
         {
             var builder = new DbContextOptionsBuilder<TenantErpDbContext>();
 
-            // TENANT_ERP_CONNECTION wins, then the TenantErp entry in the application
-            // appsettings.json, then a local database as a last resort.
+            // There is one tenant schema but several tenant databases, so "update the tenant
+            // database" is ambiguous. Left alone this targets TenantErp, which is tenant_a;
+            // set TENANT_ERP_CONNECTION_NAME to migrate a different one, for example
+            // TenantErpB. The resolved server and catalogue are printed either way, because a
+            // migration applied to the wrong tenant is the expensive mistake here.
+            var connectionName =
+                Environment.GetEnvironmentVariable("TENANT_ERP_CONNECTION_NAME") ?? "TenantErp";
+
+            // TENANT_ERP_CONNECTION (a full connection string) wins over the named lookup.
             var conn = DesignTimeConnectionStrings.Resolve(
                 "TENANT_ERP_CONNECTION",
-                "TenantErp",
+                connectionName,
                 "Server=(localdb)\\mssqllocaldb;Database=TenantErp;Trusted_Connection=True;MultipleActiveResultSets=true;");
 
             builder.UseSqlServer(conn, b => b.MigrationsAssembly(typeof(TenantErpDbContext).Assembly.FullName));

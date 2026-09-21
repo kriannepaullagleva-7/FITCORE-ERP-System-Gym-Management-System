@@ -130,6 +130,18 @@ namespace ERP_api.Infrastructure
         public static string GetUsername(this ClaimsPrincipal user) =>
             user.FindFirstValue(ClaimTypes.Name) ?? "";
 
+        public static string GetFullName(this ClaimsPrincipal user) =>
+            user.FindFirstValue(FitCoreClaims.FullName) ?? "";
+
+        /// <summary>
+        /// This user's Employee row in their own tenant database, when they have one. Absent
+        /// for accounts that are not linked to a roster entry.
+        /// </summary>
+        public static int? GetEmployeeId(this ClaimsPrincipal user) =>
+            int.TryParse(user.FindFirstValue(FitCoreClaims.EmployeeId), out var id) && id > 0
+                ? id
+                : null;
+
         public static bool HasModule(this ClaimsPrincipal user, string module) =>
             user.FindAll(FitCoreClaims.Module)
                 .Any(c => string.Equals(c.Value, module, StringComparison.OrdinalIgnoreCase));

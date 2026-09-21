@@ -8,7 +8,22 @@ namespace ERP_infrastructure.services
     {
         public int PaymentId { get; set; }
         public int MemberId { get; set; }
+
+        /// <summary>The member's real name, always populated. Used on receipts and detail views.</summary>
         public string MemberName { get; set; } = string.Empty;
+
+        /// <summary>
+        /// What the Payments grid shows in its Member column.
+        ///
+        /// Counter sales are recorded against a member because the schema requires one, but
+        /// in a financial history the member is not the point of the row - the sale is. So a
+        /// sales payment reads "Others" here while <see cref="MemberName"/> keeps the real
+        /// name for the receipt. Nothing is hidden, only de-emphasised where it would mislead.
+        /// </summary>
+        public string MemberDisplay { get; set; } = string.Empty;
+
+        /// <summary>Membership, Sales or General.</summary>
+        public string Category { get; set; } = string.Empty;
 
         public int? SubscriptionId { get; set; }
         public string PlanName { get; set; } = "- general -";
@@ -24,6 +39,10 @@ namespace ERP_infrastructure.services
         public string ReferenceNo { get; set; } = string.Empty;
         public string Status { get; set; } = string.Empty;
         public string Notes { get; set; } = string.Empty;
+
+        /// <summary>The signed-in user who took the money.</summary>
+        public int? ProcessedByUserId { get; set; }
+        public string ProcessedBy { get; set; } = string.Empty;
     }
 
     public class PaymentMethodTotal

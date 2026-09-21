@@ -1,0 +1,532 @@
+@page "/fitcore/suppliers"
+@inject SupplierApiService SupplierApi
+@inject ToastService Toasts
+
+@*
+    Who the gym buys stock from. Sits beside Products and Inventory because that is what a
+    supplier relates to, and is gated on the Inventory module to match SuppliersController.
+*@
+
+<PageTitle>Suppliers - FitCore ERP</PageTitle>
+
+<PageHeader Title="Suppliers"
+            Description="Who the gym buys stock from, and how to reach them."
+            Crumbs="crumbs">
+    <Actions>
+        <a class="fc-btn fc-btn-secondary" href="fitcore/inventory">
+            <Icon Name="inventory" Size="15" /> Inventory
+        </a>
+        <button class="fc-btn fc-btn-secondary" @onclick="ReloadAsync" disabled="@isLoading">
+            <Icon Name="refresh" Size="15" /> Refresh
+        </button>
+        <button class="fc-btn fc-btn-primary" @onclick="OpenCreate">
+            <Icon Name="plus" Size="15" /> Add supplier
+        </button>
+    </Actions>
+</PageHeader>
+
+<Alert Message="@pageError" Kind="error" OnDismiss="() => pageError = null" />
+
+<div class="fc-kpi-grid">
+    <StatCard Label="Total suppliers" Value="@suppliers.Count.ToString("N0")" Icon="supplier" Tone="blue" />
+    <StatCard Label="Active" Value="@suppliers.Count(s => s.IsActive).ToString("N0")"
+              Hint="Available to order from" Icon="check" Tone="green" />
+    <StatCard Label="With a named contact" Value="@suppliers.Count(s => !string.IsNullOrWhiteSpace(s.ContactPerson)).ToString("N0")"
+              Hint="Someone to call" Icon="user" Tone="slate" />
+    <StatCard Label="Added this month" Value="@AddedThisMonth.ToString("N0")"
+              Hint="Since the 1st" Icon="calendar" Tone="blue" />
+</div>
+
+<div class="fc-filters">
+    <div class="fc-filter fc-filter-grow">
+        <label class="fc-label" for="supplier-search">Search</label>
+        <div class="fc-search">
+            <Icon Name="search" Size="15" />
+            <input id="supplier-search" class="fc-input" placeholder="Name, code, contact or email"
+                   value="@searchTerm" @oninput="OnSearchInput" />
+        </div>
+    </div>
+
+    <div class="fc-filter">
+        <label class="fc-label" for="supplier-state">Status</label>
+        <select id="supplier-state" class="fc-select" @bind="statusFilter">
+            <option value="">All</option>
+            <option value="active">Active only</option>
+            <option value="inactive">Inactive only</option>
+        </select>
+    </div>
+
+    <button class="fc-btn fc-btn-secondary" @onclick="ClearFilters">
+        <Icon Name="x" Size="14" /> Clear
+    </button>
+</div>
+
+<div class="fc-card">
+    <div class="fc-card-head">
+        <div>
+            <h3 class="fc-card-title">Supplier list</h3>
+            <p class="fc-card-sub">Showing @Filtered.Count of @suppliers.Count supplier(s)</p>
+        </div>
+    </div>
+
+    <div class="fc-card-body is-flush">
+        @if (isLoading)
+        {
+            <LoadingState AsSkeleton="true" Rows="5" />
+        }
+        else if (suppliers.Count == 0)
+        {
+            <EmptyState Title="No suppliers yet"
+                        Message="Add a supplier to record who stock is bought from."
+                        Icon="supplier">
+                <Action>
+                    <button class="fc-btn fc-btn-primary" @onclick="OpenCreate">
+                        <Icon Name="plus" Size="15" /> Add the first supplier
+                    </button>
+                </Action>
+            </EmptyState>
+        }
+        else if (Filtered.Count == 0)
+        {
+            <EmptyState Title="No suppliers match those filters" Icon="filter">
+                <Action>
+                    <button class="fc-btn fc-btn-secondary" @onclick="ClearFilters">Clear filters</button>
+                </Action>
+            </EmptyState>
+        }
+        else
+        {
+            <div class="fc-table-wrap">
+                <table class="fc-table">
+                    <thead>
+                        <tr>
+                            <SortableHeader State="table" Column="Code" Label="Code" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Column="Name" Label="Supplier" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Column="Person" Label="Contact person" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Column="Contact" Label="Contact" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Label="Address" />
+                            <SortableHeader State="table" Column="Added" Label="Added" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Column="Status" Label="Status" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Label="Actions" CssClass="fc-right" />
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var supplier in PageRows)
+                        {
+                            <tr class="@(supplier.IsActive ? "" : "is-muted")">
+                                <td class="fc-id">@supplier.SupplierCode</td>
+                                <td class="fc-cell-strong">@supplier.SupplierName</td>
+                                <td>
+                                    @if (string.IsNullOrWhiteSpace(supplier.ContactPerson))
+                                    {
+                                        <span class="fc-muted">-</span>
+                                    }
+                                    else
+                                    {
+                                        @supplier.ContactPerson
+                                    }
+                                </td>
+                                <td>
+                                    @if (string.IsNullOrWhiteSpace(supplier.ContactNumber) &&
+                                         string.IsNullOrWhiteSpace(supplier.EmailAddress))
+                                    {
+                                        <span class="fc-muted">-</span>
+                                    }
+                                    else
+                                    {
+                                        @supplier.ContactNumber
+                                        @if (!string.IsNullOrWhiteSpace(supplier.EmailAddress))
+                                        {
+                                            <span class="fc-cell-sub">@supplier.EmailAddress</span>
+                                        }
+                                    }
+                                </td>
+                                <td>
+                                    @if (string.IsNullOrWhiteSpace(supplier.Address))
+                                    {
+                                        <span class="fc-muted">-</span>
+                                    }
+                                    else
+                                    {
+                                        @supplier.Address
+                                    }
+                                </td>
+                                <td>@supplier.CreatedAt.ToLocalTime().ToString("d MMM yyyy")</td>
+                                <td><StatusBadge Status="@(supplier.IsActive ? "Active" : "Inactive")" /></td>
+                                <td class="fc-right">
+                                    <span class="fc-actions">
+                                        <button class="fc-act" title="View supplier" @onclick="() => detail = supplier">
+                                            <Icon Name="eye" Size="14" />
+                                        </button>
+                                        <button class="fc-act" title="Edit supplier" @onclick="() => OpenEdit(supplier)">
+                                            <Icon Name="edit" Size="14" />
+                                        </button>
+                                        <button class="fc-act is-danger" title="Delete supplier"
+                                                @onclick="() => pendingDelete = supplier">
+                                            <Icon Name="trash" Size="14" />
+                                        </button>
+                                    </span>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            <Pagination State="table" OnChanged="StateHasChanged" />
+        }
+    </div>
+</div>
+
+<Modal IsOpen="showEditor" Title="@(editingId is null ? "Add supplier" : $"Edit {form.SupplierName}")"
+       Subtitle="Suppliers are who stock is purchased from."
+       OnClose="CloseEditor">
+    <ChildContent>
+        <Alert Message="@formError" Kind="error" />
+
+        <div class="fc-form-grid">
+            <div class="fc-field">
+                <label class="fc-label" for="sup-code">Supplier code<span class="fc-req">*</span></label>
+                <input id="sup-code" class="fc-input @(Invalid(nameof(form.SupplierCode)))" @bind="form.SupplierCode"
+                       placeholder="e.g. SUP-001" />
+                @if (fieldErrors.TryGetValue(nameof(form.SupplierCode), out var codeError))
+                {
+                    <span class="fc-error">@codeError</span>
+                }
+                else
+                {
+                    <span class="fc-hint">Must be unique. The database enforces it too.</span>
+                }
+            </div>
+
+            <div class="fc-field">
+                <label class="fc-label" for="sup-name">Supplier name<span class="fc-req">*</span></label>
+                <input id="sup-name" class="fc-input @(Invalid(nameof(form.SupplierName)))" @bind="form.SupplierName" />
+                @if (fieldErrors.TryGetValue(nameof(form.SupplierName), out var nameError))
+                {
+                    <span class="fc-error">@nameError</span>
+                }
+            </div>
+
+            <div class="fc-field">
+                <label class="fc-label" for="sup-person">Contact person</label>
+                <input id="sup-person" class="fc-input" @bind="form.ContactPerson" placeholder="Who to ask for" />
+            </div>
+
+            <div class="fc-field">
+                <label class="fc-label" for="sup-phone">Contact number</label>
+                <input id="sup-phone" class="fc-input" @bind="form.ContactNumber" placeholder="09XX XXX XXXX" />
+            </div>
+
+            <div class="fc-field fc-span-2">
+                <label class="fc-label" for="sup-email">Email address</label>
+                <input id="sup-email" type="email" class="fc-input @(Invalid(nameof(form.EmailAddress)))"
+                       @bind="form.EmailAddress" placeholder="orders@supplier.com" />
+                @if (fieldErrors.TryGetValue(nameof(form.EmailAddress), out var emailError))
+                {
+                    <span class="fc-error">@emailError</span>
+                }
+            </div>
+
+            <div class="fc-field fc-span-2">
+                <label class="fc-label" for="sup-address">Address</label>
+                <textarea id="sup-address" class="fc-input" rows="2" @bind="form.Address"
+                          placeholder="Where orders are collected from or delivered by"></textarea>
+            </div>
+
+            @if (editingId is not null)
+            {
+                <div class="fc-field fc-span-2">
+                    <label class="fc-check">
+                        <input type="checkbox" @bind="form.IsActive" />
+                        <span>Active</span>
+                    </label>
+                    <span class="fc-hint">
+                        An inactive supplier stays on past purchase records but is filtered out of pickers.
+                    </span>
+                </div>
+            }
+        </div>
+    </ChildContent>
+
+    <Footer>
+        <button class="fc-btn fc-btn-secondary" @onclick="CloseEditor" disabled="@isSaving">Cancel</button>
+        <button class="fc-btn fc-btn-success" @onclick="SaveAsync" disabled="@isSaving">
+            @if (isSaving)
+            {
+                <span class="fc-spinner is-sm"></span>
+            }
+            else
+            {
+                <Icon Name="check" Size="15" />
+            }
+            @(editingId is null ? "Create supplier" : "Save changes")
+        </button>
+    </Footer>
+</Modal>
+
+<Modal IsOpen="detail is not null" Title="@(detail?.SupplierName ?? "")"
+       Subtitle="@detail?.SupplierCode" OnClose="() => detail = null" CloseOnBackdropClick="true">
+    <ChildContent>
+        @if (detail is not null)
+        {
+            <dl class="fc-dl">
+                <dt>Code</dt><dd>@detail.SupplierCode</dd>
+                <dt>Name</dt><dd>@detail.SupplierName</dd>
+                <dt>Contact person</dt>
+                <dd>@(string.IsNullOrWhiteSpace(detail.ContactPerson) ? "-" : detail.ContactPerson)</dd>
+                <dt>Contact number</dt>
+                <dd>@(string.IsNullOrWhiteSpace(detail.ContactNumber) ? "-" : detail.ContactNumber)</dd>
+                <dt>Email</dt>
+                <dd>@(string.IsNullOrWhiteSpace(detail.EmailAddress) ? "-" : detail.EmailAddress)</dd>
+                <dt>Address</dt>
+                <dd>@(string.IsNullOrWhiteSpace(detail.Address) ? "-" : detail.Address)</dd>
+                <dt>Status</dt><dd><StatusBadge Status="@(detail.IsActive ? "Active" : "Inactive")" /></dd>
+                <dt>Added</dt><dd>@detail.CreatedAt.ToLocalTime().ToString("d MMM yyyy")</dd>
+            </dl>
+        }
+    </ChildContent>
+
+    <Footer>
+        <button class="fc-btn fc-btn-secondary" @onclick="() => detail = null">Close</button>
+        <a class="fc-btn fc-btn-primary" href="fitcore/products">
+            <Icon Name="product" Size="15" /> Products
+        </a>
+    </Footer>
+</Modal>
+
+<ConfirmDialog IsOpen="pendingDelete is not null"
+               Title="Delete this supplier?"
+               Message="@($"\"{pendingDelete?.SupplierName}\" will be removed from the supplier list.")"
+               Warning="If the supplier appears on past stock records, mark them inactive instead of deleting."
+               ConfirmText="Delete supplier"
+               IsDestructive="true"
+               IsBusy="isDeleting"
+               OnConfirm="ConfirmDeleteAsync"
+               OnCancel="() => pendingDelete = null" />
+
+@code {
+    private readonly List<PageHeader.Crumb> crumbs = new() { new("Operations"), new("Suppliers") };
+
+    private List<SupplierDto> suppliers = new();
+
+    private bool isLoading = true;
+    private string? pageError;
+
+    private TableState<SupplierDto> table = null!;
+
+    private string searchTerm = "";
+    private string statusFilter = "";
+
+    private bool showEditor;
+    private int? editingId;
+    private UpdateSupplierDto form = new();
+    private string? formError;
+    private Dictionary<string, string> fieldErrors = new();
+    private bool isSaving;
+
+    private SupplierDto? detail;
+    private SupplierDto? pendingDelete;
+    private bool isDeleting;
+
+    protected override Task OnInitializedAsync()
+    {
+        table = new TableState<SupplierDto>(defaultSort: "Name")
+            .Column("Code", s => s.SupplierCode)
+            .Column("Name", s => s.SupplierName)
+            .Column("Person", s => s.ContactPerson ?? "")
+            .Column("Contact", s => s.ContactNumber ?? "")
+            .Column("Added", s => s.CreatedAt)
+            .Column("Status", s => s.IsActive);
+
+        return ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        isLoading = true;
+        pageError = null;
+
+        var result = await SupplierApi.GetAllAsync();
+
+        if (result.IsSuccess)
+        {
+            suppliers = result.Value ?? new();
+        }
+        else
+        {
+            pageError = result.ErrorMessage;
+        }
+
+        isLoading = false;
+    }
+
+    private int AddedThisMonth
+    {
+        get
+        {
+            var start = new DateTime(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+            return suppliers.Count(s => s.CreatedAt >= start);
+        }
+    }
+
+    private List<SupplierDto> Filtered
+    {
+        get
+        {
+            IEnumerable<SupplierDto> query = suppliers;
+
+            if (!string.IsNullOrWhiteSpace(searchTerm))
+            {
+                var term = searchTerm.Trim();
+                query = query.Where(s =>
+                    s.SupplierName.Contains(term, StringComparison.OrdinalIgnoreCase) ||
+                    s.SupplierCode.Contains(term, StringComparison.OrdinalIgnoreCase) ||
+                    (s.ContactPerson ?? "").Contains(term, StringComparison.OrdinalIgnoreCase) ||
+                    (s.ContactNumber ?? "").Contains(term, StringComparison.OrdinalIgnoreCase) ||
+                    (s.EmailAddress ?? "").Contains(term, StringComparison.OrdinalIgnoreCase));
+            }
+
+            query = statusFilter switch
+            {
+                "active" => query.Where(s => s.IsActive),
+                "inactive" => query.Where(s => !s.IsActive),
+                _ => query
+            };
+
+            return query.ToList();
+        }
+    }
+
+    private List<SupplierDto> PageRows => table.Apply(Filtered);
+
+    private void OnSearchInput(ChangeEventArgs args) => searchTerm = args.Value?.ToString() ?? "";
+
+    private void ClearFilters()
+    {
+        searchTerm = "";
+        statusFilter = "";
+    }
+
+    private void OpenCreate()
+    {
+        editingId = null;
+        form = new UpdateSupplierDto { IsActive = true };
+        fieldErrors = new();
+        formError = null;
+        showEditor = true;
+    }
+
+    private void OpenEdit(SupplierDto supplier)
+    {
+        editingId = supplier.SupplierId;
+        form = new UpdateSupplierDto
+        {
+            SupplierCode = supplier.SupplierCode,
+            SupplierName = supplier.SupplierName,
+            ContactPerson = supplier.ContactPerson,
+            ContactNumber = supplier.ContactNumber,
+            EmailAddress = supplier.EmailAddress,
+            Address = supplier.Address,
+            IsActive = supplier.IsActive
+        };
+        fieldErrors = new();
+        formError = null;
+        showEditor = true;
+    }
+
+    private void CloseEditor()
+    {
+        showEditor = false;
+        editingId = null;
+        formError = null;
+    }
+
+    private string Invalid(string field) => fieldErrors.ContainsKey(field) ? "is-invalid" : "";
+
+    private bool Validate()
+    {
+        fieldErrors = new();
+
+        if (string.IsNullOrWhiteSpace(form.SupplierCode))
+            fieldErrors[nameof(form.SupplierCode)] = "A supplier code is required.";
+
+        if (string.IsNullOrWhiteSpace(form.SupplierName))
+            fieldErrors[nameof(form.SupplierName)] = "A supplier name is required.";
+
+        if (!string.IsNullOrWhiteSpace(form.EmailAddress) &&
+            (!form.EmailAddress.Contains('@') || form.EmailAddress.StartsWith('@') ||
+             form.EmailAddress.EndsWith('@')))
+        {
+            fieldErrors[nameof(form.EmailAddress)] = "Enter a valid email address, or leave it blank.";
+        }
+
+        return fieldErrors.Count == 0;
+    }
+
+    private async Task SaveAsync()
+    {
+        formError = null;
+
+        if (!Validate()) return;
+
+        isSaving = true;
+
+        bool succeeded;
+        string? message;
+
+        if (editingId is null)
+        {
+            var result = await SupplierApi.CreateAsync(new CreateSupplierDto
+            {
+                SupplierCode = form.SupplierCode,
+                SupplierName = form.SupplierName,
+                ContactPerson = form.ContactPerson,
+                ContactNumber = form.ContactNumber,
+                EmailAddress = form.EmailAddress,
+                Address = form.Address
+            });
+
+            succeeded = result.IsSuccess;
+            message = result.ErrorMessage;
+        }
+        else
+        {
+            var result = await SupplierApi.UpdateAsync(editingId.Value, form);
+            succeeded = result.IsSuccess;
+            message = result.ErrorMessage;
+        }
+
+        isSaving = false;
+
+        if (!succeeded)
+        {
+            formError = message;
+            return;
+        }
+
+        Toasts.Success($"\"{form.SupplierName}\" was {(editingId is null ? "created" : "updated")}.");
+        CloseEditor();
+        await ReloadAsync();
+    }
+
+    private async Task ConfirmDeleteAsync()
+    {
+        if (pendingDelete is null) return;
+
+        isDeleting = true;
+        var result = await SupplierApi.DeleteAsync(pendingDelete.SupplierId);
+        isDeleting = false;
+
+        if (!result.IsSuccess)
+        {
+            pageError = result.ErrorMessage;
+            pendingDelete = null;
+            return;
+        }
+
+        Toasts.Success($"\"{pendingDelete.SupplierName}\" was deleted.", "Supplier removed");
+        pendingDelete = null;
+        await ReloadAsync();
+    }
+}

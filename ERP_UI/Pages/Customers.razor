@@ -1,0 +1,505 @@
+@page "/fitcore/customers"
+@inject CustomerApiService CustomerApi
+@inject ToastService Toasts
+
+@*
+    Walk-in and account customers - the people a sale can be attributed to who are not gym
+    members. Members live under Membership; this is the separate master list the API has
+    always served at /api/customers, gated on the Sales module just as that controller is.
+*@
+
+<PageTitle>Customers - FitCore ERP</PageTitle>
+
+<PageHeader Title="Customers"
+            Description="Walk-in and account customers, separate from gym members."
+            Crumbs="crumbs">
+    <Actions>
+        <button class="fc-btn fc-btn-secondary" @onclick="ReloadAsync" disabled="@isLoading">
+            <Icon Name="refresh" Size="15" /> Refresh
+        </button>
+        <button class="fc-btn fc-btn-primary" @onclick="OpenCreate">
+            <Icon Name="plus" Size="15" /> Add customer
+        </button>
+    </Actions>
+</PageHeader>
+
+<Alert Message="@pageError" Kind="error" OnDismiss="() => pageError = null" />
+
+<div class="fc-kpi-grid">
+    <StatCard Label="Total customers" Value="@customers.Count.ToString("N0")" Icon="customer" Tone="blue" />
+    <StatCard Label="Active" Value="@customers.Count(c => c.IsActive).ToString("N0")"
+              Hint="Available to bill" Icon="check" Tone="green" />
+    <StatCard Label="With email" Value="@customers.Count(c => !string.IsNullOrWhiteSpace(c.EmailAddress)).ToString("N0")"
+              Hint="Reachable for receipts" Icon="info" Tone="slate" />
+    <StatCard Label="Added this month" Value="@AddedThisMonth.ToString("N0")"
+              Hint="Since the 1st" Icon="calendar" Tone="blue" />
+</div>
+
+<div class="fc-filters">
+    <div class="fc-filter fc-filter-grow">
+        <label class="fc-label" for="customer-search">Search</label>
+        <div class="fc-search">
+            <Icon Name="search" Size="15" />
+            <input id="customer-search" class="fc-input" placeholder="Name, code, phone or email"
+                   value="@searchTerm" @oninput="OnSearchInput" />
+        </div>
+    </div>
+
+    <div class="fc-filter">
+        <label class="fc-label" for="customer-state">Status</label>
+        <select id="customer-state" class="fc-select" @bind="statusFilter">
+            <option value="">All</option>
+            <option value="active">Active only</option>
+            <option value="inactive">Inactive only</option>
+        </select>
+    </div>
+
+    <button class="fc-btn fc-btn-secondary" @onclick="ClearFilters">
+        <Icon Name="x" Size="14" /> Clear
+    </button>
+</div>
+
+<div class="fc-card">
+    <div class="fc-card-head">
+        <div>
+            <h3 class="fc-card-title">Customer list</h3>
+            <p class="fc-card-sub">Showing @Filtered.Count of @customers.Count customer(s)</p>
+        </div>
+    </div>
+
+    <div class="fc-card-body is-flush">
+        @if (isLoading)
+        {
+            <LoadingState AsSkeleton="true" Rows="5" />
+        }
+        else if (customers.Count == 0)
+        {
+            <EmptyState Title="No customers yet"
+                        Message="Add a customer to bill someone who is not a gym member."
+                        Icon="customer">
+                <Action>
+                    <button class="fc-btn fc-btn-primary" @onclick="OpenCreate">
+                        <Icon Name="plus" Size="15" /> Add the first customer
+                    </button>
+                </Action>
+            </EmptyState>
+        }
+        else if (Filtered.Count == 0)
+        {
+            <EmptyState Title="No customers match those filters" Icon="filter">
+                <Action>
+                    <button class="fc-btn fc-btn-secondary" @onclick="ClearFilters">Clear filters</button>
+                </Action>
+            </EmptyState>
+        }
+        else
+        {
+            <div class="fc-table-wrap">
+                <table class="fc-table">
+                    <thead>
+                        <tr>
+                            <SortableHeader State="table" Column="Code" Label="Code" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Column="Name" Label="Name" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Column="Contact" Label="Contact" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Label="Address" />
+                            <SortableHeader State="table" Column="Added" Label="Added" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Column="Status" Label="Status" OnSorted="StateHasChanged" />
+                            <SortableHeader State="table" Label="Actions" CssClass="fc-right" />
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var customer in PageRows)
+                        {
+                            <tr class="@(customer.IsActive ? "" : "is-muted")">
+                                <td class="fc-id">@customer.CustomerCode</td>
+                                <td class="fc-cell-strong">@customer.CustomerName</td>
+                                <td>
+                                    @if (string.IsNullOrWhiteSpace(customer.ContactNumber) &&
+                                         string.IsNullOrWhiteSpace(customer.EmailAddress))
+                                    {
+                                        <span class="fc-muted">-</span>
+                                    }
+                                    else
+                                    {
+                                        @customer.ContactNumber
+                                        @if (!string.IsNullOrWhiteSpace(customer.EmailAddress))
+                                        {
+                                            <span class="fc-cell-sub">@customer.EmailAddress</span>
+                                        }
+                                    }
+                                </td>
+                                <td>
+                                    @if (string.IsNullOrWhiteSpace(customer.Address))
+                                    {
+                                        <span class="fc-muted">-</span>
+                                    }
+                                    else
+                                    {
+                                        @customer.Address
+                                    }
+                                </td>
+                                <td>@customer.CreatedAt.ToLocalTime().ToString("d MMM yyyy")</td>
+                                <td><StatusBadge Status="@(customer.IsActive ? "Active" : "Inactive")" /></td>
+                                <td class="fc-right">
+                                    <span class="fc-actions">
+                                        <button class="fc-act" title="View customer" @onclick="() => detail = customer">
+                                            <Icon Name="eye" Size="14" />
+                                        </button>
+                                        <button class="fc-act" title="Edit customer" @onclick="() => OpenEdit(customer)">
+                                            <Icon Name="edit" Size="14" />
+                                        </button>
+                                        <button class="fc-act is-danger" title="Delete customer"
+                                                @onclick="() => pendingDelete = customer">
+                                            <Icon Name="trash" Size="14" />
+                                        </button>
+                                    </span>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            <Pagination State="table" OnChanged="StateHasChanged" />
+        }
+    </div>
+</div>
+
+<Modal IsOpen="showEditor" Title="@(editingId is null ? "Add customer" : $"Edit {form.CustomerName}")"
+       Subtitle="Customers are billed outside a gym membership."
+       OnClose="CloseEditor">
+    <ChildContent>
+        <Alert Message="@formError" Kind="error" />
+
+        <div class="fc-form-grid">
+            <div class="fc-field">
+                <label class="fc-label" for="cust-code">Customer code<span class="fc-req">*</span></label>
+                <input id="cust-code" class="fc-input @(Invalid(nameof(form.CustomerCode)))" @bind="form.CustomerCode"
+                       placeholder="e.g. CUST-001" />
+                @if (fieldErrors.TryGetValue(nameof(form.CustomerCode), out var codeError))
+                {
+                    <span class="fc-error">@codeError</span>
+                }
+                else
+                {
+                    <span class="fc-hint">Must be unique. The database enforces it too.</span>
+                }
+            </div>
+
+            <div class="fc-field">
+                <label class="fc-label" for="cust-name">Customer name<span class="fc-req">*</span></label>
+                <input id="cust-name" class="fc-input @(Invalid(nameof(form.CustomerName)))" @bind="form.CustomerName" />
+                @if (fieldErrors.TryGetValue(nameof(form.CustomerName), out var nameError))
+                {
+                    <span class="fc-error">@nameError</span>
+                }
+            </div>
+
+            <div class="fc-field">
+                <label class="fc-label" for="cust-phone">Contact number</label>
+                <input id="cust-phone" class="fc-input" @bind="form.ContactNumber" placeholder="09XX XXX XXXX" />
+            </div>
+
+            <div class="fc-field">
+                <label class="fc-label" for="cust-email">Email address</label>
+                <input id="cust-email" type="email" class="fc-input @(Invalid(nameof(form.EmailAddress)))"
+                       @bind="form.EmailAddress" placeholder="name@example.com" />
+                @if (fieldErrors.TryGetValue(nameof(form.EmailAddress), out var emailError))
+                {
+                    <span class="fc-error">@emailError</span>
+                }
+            </div>
+
+            <div class="fc-field fc-span-2">
+                <label class="fc-label" for="cust-address">Address</label>
+                <textarea id="cust-address" class="fc-input" rows="2" @bind="form.Address"
+                          placeholder="Where invoices and deliveries go"></textarea>
+            </div>
+
+            @if (editingId is not null)
+            {
+                <div class="fc-field fc-span-2">
+                    <label class="fc-check">
+                        <input type="checkbox" @bind="form.IsActive" />
+                        <span>Active</span>
+                    </label>
+                    <span class="fc-hint">
+                        An inactive customer stays on past records but is filtered out of pickers.
+                    </span>
+                </div>
+            }
+        </div>
+    </ChildContent>
+
+    <Footer>
+        <button class="fc-btn fc-btn-secondary" @onclick="CloseEditor" disabled="@isSaving">Cancel</button>
+        <button class="fc-btn fc-btn-success" @onclick="SaveAsync" disabled="@isSaving">
+            @if (isSaving)
+            {
+                <span class="fc-spinner is-sm"></span>
+            }
+            else
+            {
+                <Icon Name="check" Size="15" />
+            }
+            @(editingId is null ? "Create customer" : "Save changes")
+        </button>
+    </Footer>
+</Modal>
+
+<Modal IsOpen="detail is not null" Title="@(detail?.CustomerName ?? "")"
+       Subtitle="@detail?.CustomerCode" OnClose="() => detail = null" CloseOnBackdropClick="true">
+    <ChildContent>
+        @if (detail is not null)
+        {
+            <dl class="fc-dl">
+                <dt>Code</dt><dd>@detail.CustomerCode</dd>
+                <dt>Name</dt><dd>@detail.CustomerName</dd>
+                <dt>Contact number</dt>
+                <dd>@(string.IsNullOrWhiteSpace(detail.ContactNumber) ? "-" : detail.ContactNumber)</dd>
+                <dt>Email</dt>
+                <dd>@(string.IsNullOrWhiteSpace(detail.EmailAddress) ? "-" : detail.EmailAddress)</dd>
+                <dt>Address</dt>
+                <dd>@(string.IsNullOrWhiteSpace(detail.Address) ? "-" : detail.Address)</dd>
+                <dt>Status</dt><dd><StatusBadge Status="@(detail.IsActive ? "Active" : "Inactive")" /></dd>
+                <dt>Added</dt><dd>@detail.CreatedAt.ToLocalTime().ToString("d MMM yyyy")</dd>
+            </dl>
+        }
+    </ChildContent>
+
+    <Footer>
+        <button class="fc-btn fc-btn-secondary" @onclick="() => detail = null">Close</button>
+    </Footer>
+</Modal>
+
+<ConfirmDialog IsOpen="pendingDelete is not null"
+               Title="Delete this customer?"
+               Message="@($"\"{pendingDelete?.CustomerName}\" will be removed from the customer list.")"
+               Warning="If the customer appears on past records, mark them inactive instead of deleting."
+               ConfirmText="Delete customer"
+               IsDestructive="true"
+               IsBusy="isDeleting"
+               OnConfirm="ConfirmDeleteAsync"
+               OnCancel="() => pendingDelete = null" />
+
+@code {
+    private readonly List<PageHeader.Crumb> crumbs = new() { new("Operations"), new("Customers") };
+
+    private List<CustomerDto> customers = new();
+
+    private bool isLoading = true;
+    private string? pageError;
+
+    private TableState<CustomerDto> table = null!;
+
+    private string searchTerm = "";
+    private string statusFilter = "";
+
+    private bool showEditor;
+    private int? editingId;
+    private UpdateCustomerDto form = new();
+    private string? formError;
+    private Dictionary<string, string> fieldErrors = new();
+    private bool isSaving;
+
+    private CustomerDto? detail;
+    private CustomerDto? pendingDelete;
+    private bool isDeleting;
+
+    protected override Task OnInitializedAsync()
+    {
+        table = new TableState<CustomerDto>(defaultSort: "Name")
+            .Column("Code", c => c.CustomerCode)
+            .Column("Name", c => c.CustomerName)
+            .Column("Contact", c => c.ContactNumber ?? "")
+            .Column("Added", c => c.CreatedAt)
+            .Column("Status", c => c.IsActive);
+
+        return ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        isLoading = true;
+        pageError = null;
+
+        var result = await CustomerApi.GetAllAsync();
+
+        if (result.IsSuccess)
+        {
+            customers = result.Value ?? new();
+        }
+        else
+        {
+            pageError = result.ErrorMessage;
+        }
+
+        isLoading = false;
+    }
+
+    private int AddedThisMonth
+    {
+        get
+        {
+            var start = new DateTime(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+            return customers.Count(c => c.CreatedAt >= start);
+        }
+    }
+
+    private List<CustomerDto> Filtered
+    {
+        get
+        {
+            IEnumerable<CustomerDto> query = customers;
+
+            if (!string.IsNullOrWhiteSpace(searchTerm))
+            {
+                var term = searchTerm.Trim();
+                query = query.Where(c =>
+                    c.CustomerName.Contains(term, StringComparison.OrdinalIgnoreCase) ||
+                    c.CustomerCode.Contains(term, StringComparison.OrdinalIgnoreCase) ||
+                    (c.ContactNumber ?? "").Contains(term, StringComparison.OrdinalIgnoreCase) ||
+                    (c.EmailAddress ?? "").Contains(term, StringComparison.OrdinalIgnoreCase));
+            }
+
+            query = statusFilter switch
+            {
+                "active" => query.Where(c => c.IsActive),
+                "inactive" => query.Where(c => !c.IsActive),
+                _ => query
+            };
+
+            return query.ToList();
+        }
+    }
+
+    private List<CustomerDto> PageRows => table.Apply(Filtered);
+
+    private void OnSearchInput(ChangeEventArgs args) => searchTerm = args.Value?.ToString() ?? "";
+
+    private void ClearFilters()
+    {
+        searchTerm = "";
+        statusFilter = "";
+    }
+
+    private void OpenCreate()
+    {
+        editingId = null;
+        form = new UpdateCustomerDto { IsActive = true };
+        fieldErrors = new();
+        formError = null;
+        showEditor = true;
+    }
+
+    private void OpenEdit(CustomerDto customer)
+    {
+        editingId = customer.CustomerId;
+        form = new UpdateCustomerDto
+        {
+            CustomerCode = customer.CustomerCode,
+            CustomerName = customer.CustomerName,
+            ContactNumber = customer.ContactNumber,
+            EmailAddress = customer.EmailAddress,
+            Address = customer.Address,
+            IsActive = customer.IsActive
+        };
+        fieldErrors = new();
+        formError = null;
+        showEditor = true;
+    }
+
+    private void CloseEditor()
+    {
+        showEditor = false;
+        editingId = null;
+        formError = null;
+    }
+
+    private string Invalid(string field) => fieldErrors.ContainsKey(field) ? "is-invalid" : "";
+
+    private bool Validate()
+    {
+        fieldErrors = new();
+
+        if (string.IsNullOrWhiteSpace(form.CustomerCode))
+            fieldErrors[nameof(form.CustomerCode)] = "A customer code is required.";
+
+        if (string.IsNullOrWhiteSpace(form.CustomerName))
+            fieldErrors[nameof(form.CustomerName)] = "A customer name is required.";
+
+        if (!string.IsNullOrWhiteSpace(form.EmailAddress) &&
+            (!form.EmailAddress.Contains('@') || form.EmailAddress.StartsWith('@') ||
+             form.EmailAddress.EndsWith('@')))
+        {
+            fieldErrors[nameof(form.EmailAddress)] = "Enter a valid email address, or leave it blank.";
+        }
+
+        return fieldErrors.Count == 0;
+    }
+
+    private async Task SaveAsync()
+    {
+        formError = null;
+
+        if (!Validate()) return;
+
+        isSaving = true;
+
+        bool succeeded;
+        string? message;
+
+        if (editingId is null)
+        {
+            var result = await CustomerApi.CreateAsync(new CreateCustomerDto
+            {
+                CustomerCode = form.CustomerCode,
+                CustomerName = form.CustomerName,
+                ContactNumber = form.ContactNumber,
+                EmailAddress = form.EmailAddress,
+                Address = form.Address
+            });
+
+            succeeded = result.IsSuccess;
+            message = result.ErrorMessage;
+        }
+        else
+        {
+            var result = await CustomerApi.UpdateAsync(editingId.Value, form);
+            succeeded = result.IsSuccess;
+            message = result.ErrorMessage;
+        }
+
+        isSaving = false;
+
+        if (!succeeded)
+        {
+            formError = message;
+            return;
+        }
+
+        Toasts.Success($"\"{form.CustomerName}\" was {(editingId is null ? "created" : "updated")}.");
+        CloseEditor();
+        await ReloadAsync();
+    }
+
+    private async Task ConfirmDeleteAsync()
+    {
+        if (pendingDelete is null) return;
+
+        isDeleting = true;
+        var result = await CustomerApi.DeleteAsync(pendingDelete.CustomerId);
+        isDeleting = false;
+
+        if (!result.IsSuccess)
+        {
+            pageError = result.ErrorMessage;
+            pendingDelete = null;
+            return;
+        }
+
+        Toasts.Success($"\"{pendingDelete.CustomerName}\" was deleted.", "Customer removed");
+        pendingDelete = null;
+        await ReloadAsync();
+    }
+}

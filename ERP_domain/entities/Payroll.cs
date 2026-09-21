@@ -41,6 +41,16 @@ namespace ERP_domain.entities
         /// <summary>Set when the run is marked Paid.</summary>
         public DateTime? PaidDate { get; set; }
 
+        /// <summary>
+        /// The signed-in user who created the run, captured from the token. A payslip has to
+        /// name who authorised it, and the audit trail alone is not something a receipt can
+        /// be reprinted from.
+        /// </summary>
+        public int? ProcessedByUserId { get; set; }
+
+        /// <summary>Their display name, denormalised so the payslip survives the account.</summary>
+        public string ProcessedBy { get; set; } = "";
+
         public string Notes { get; set; } = "";
 
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;

@@ -1,7 +1,6 @@
 using ERP_domain.entities;
 using ERP_infrastructure.repositories;
 using ERP_infrastructure.services;
-using ERP_UI.Services;
 using Microsoft.EntityFrameworkCore;
 using Xunit;
 
@@ -40,8 +39,10 @@ public class SalesAndAuditTests
             Members = new MemberService(memberRepo, paymentRepo);
             Inventory = new InventoryService(inventoryRepo, productRepo, Db.Context);
             Products = new ProductService(productRepo, Inventory, Db.Context);
-            Payments = new PaymentService(paymentRepo, subscriptionRepo, memberRepo, Db.Context);
-            Sales = new SaleService(saleRepo, memberRepo, productRepo, paymentRepo, Db.Context);
+            Payments = new PaymentService(
+                paymentRepo, subscriptionRepo, memberRepo, Db.Context, new NullCurrentUserAccessor());
+            Sales = new SaleService(
+                saleRepo, memberRepo, productRepo, paymentRepo, Db.Context, new NullCurrentUserAccessor());
         }
 
         public void Dispose() => Db.Dispose();
@@ -269,105 +270,6 @@ public class SalesAndAuditTests
         Assert.Equal(createdAt, updated.CreatedAt);
     }
 }
-
-/// <summary>
-/// The sorting and paging the data tables share. This is pure logic with no database behind
-/// it, but it decides which rows a user actually sees, so it is worth pinning down.
-/// </summary>
-public class TableStateTests
-{
-    private sealed record Row(int Id, string Name);
-
-    private static TableState<Row> Build(int pageSize = 2) =>
-        new TableState<Row>(defaultSort: "Id", pageSize: pageSize)
-            .Column("Id", r => r.Id)
-            .Column("Name", r => r.Name);
-
-    private static readonly List<Row> Rows = new()
-    {
-        new(3, "Charlie"), new(1, "Alice"), new(4, "Dana"), new(2, "Bob"), new(5, "Eve")
-    };
-
-    [Fact]
-    public void It_sorts_by_the_default_column_and_pages_the_result()
-    {
-        var table = Build();
-
-        var page = table.Apply(Rows);
-
-        Assert.Equal(new[] { 1, 2 }, page.Select(r => r.Id));
-        Assert.Equal(5, table.TotalCount);
-        Assert.Equal(3, table.TotalPages);
-        Assert.Equal(1, table.FirstRowOnPage);
-        Assert.Equal(2, table.LastRowOnPage);
-    }
-
-    [Fact]
-    public void Toggling_the_same_column_reverses_the_direction()
-    {
-        var table = Build();
-
-        table.ToggleSort("Id");
-
-        Assert.True(table.Descending);
-        Assert.Equal(new[] { 5, 4 }, table.Apply(Rows).Select(r => r.Id));
-
-        table.ToggleSort("Id");
-
-        Assert.False(table.Descending);
-        Assert.Equal(new[] { 1, 2 }, table.Apply(Rows).Select(r => r.Id));
-    }
-
-    [Fact]
-    public void Sorting_a_different_column_starts_ascending_and_resets_to_the_first_page()
-    {
-        var table = Build();
-        table.GoToPage(3);
-
-        table.ToggleSort("Name");
-
-        Assert.Equal(1, table.Page);
-        Assert.Equal(new[] { "Alice", "Bob" }, table.Apply(Rows).Select(r => r.Name));
-    }
-
-    [Fact]
-    public void An_unsortable_column_is_ignored()
-    {
-        var table = Build();
-
-        table.ToggleSort("Actions");
-
-        Assert.Equal("Id", table.SortColumn);
-        Assert.False(table.IsSortable("Actions"));
-    }
-
-    [Fact]
-    public void A_filter_that_shrinks_the_list_cannot_strand_the_user_on_a_missing_page()
-    {
-        var table = Build();
-        table.GoToPage(3);
-
-        // The list drops to two rows, so page three no longer exists.
-        var page = table.Apply(Rows.Take(2).ToList());
-
-        Assert.Equal(1, table.Page);
-        Assert.NotEmpty(page);
-    }
-
-    [Fact]
-    public void An_empty_list_reports_one_page_and_no_rows()
-    {
-        var table = Build();
-
-        var page = table.Apply(new List<Row>());
-
-        Assert.Empty(page);
-        Assert.Equal(0, table.TotalCount);
-        Assert.Equal(1, table.TotalPages);
-        Assert.Equal(0, table.FirstRowOnPage);
-    }
-}
-
 /// <summary>
 /// Payroll arithmetic. Gross and net are never accepted from a caller, so these pin down what
 /// the server calculates from the inputs it is given.

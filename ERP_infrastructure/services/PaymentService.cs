@@ -14,41 +14,66 @@ namespace ERP_infrastructure.services
         private readonly ISubscriptionRepository _subscriptionRepo;
         private readonly IMemberRepository _memberRepo;
         private readonly TenantErpDbContext _context;
+        private readonly ICurrentUserAccessor _actor;
 
         public PaymentService(
             IPaymentRepository repository,
             ISubscriptionRepository subscriptionRepo,
             IMemberRepository memberRepo,
-            TenantErpDbContext context)
+            TenantErpDbContext context,
+            ICurrentUserAccessor actor)
         {
             _repository = repository;
             _subscriptionRepo = subscriptionRepo;
             _memberRepo = memberRepo;
             _context = context;
+            _actor = actor;
         }
 
-        public static PaymentView ToView(Payment payment) => new()
+        public static PaymentView ToView(Payment payment)
         {
-            PaymentId = payment.PaymentId,
-            MemberId = payment.MemberId,
-            MemberName = payment.Member == null
+            var memberName = payment.Member == null
                 ? $"Member #{payment.MemberId}"
-                : $"{payment.Member.FirstName} {payment.Member.LastName}".Trim(),
-            SubscriptionId = payment.SubscriptionId,
-            PlanName = payment.Subscription?.Plan?.PlanName ?? "- general -",
-            SaleId = payment.SaleId,
-            AppliesTo = payment.SaleId.HasValue
-                ? $"Sale #{payment.SaleId}"
-                : payment.SubscriptionId.HasValue
-                    ? $"Membership - {payment.Subscription?.Plan?.PlanName ?? $"#{payment.SubscriptionId}"}"
-                    : "General",
-            Amount = payment.Amount,
-            PaymentDate = payment.PaymentDate,
-            Method = payment.Method,
-            ReferenceNo = payment.ReferenceNo,
-            Status = payment.Status,
-            Notes = payment.Notes
-        };
+                : $"{payment.Member.FirstName} {payment.Member.LastName}".Trim();
+
+            // Categories written before the column existed, or by a caller that did not set
+            // one, are recovered from what the payment is attached to.
+            var category = PaymentCategories.IsKnown(payment.Category)
+                ? payment.Category
+                : PaymentCategories.Infer(payment.SubscriptionId, payment.SaleId);
+
+            return new PaymentView
+            {
+                PaymentId = payment.PaymentId,
+                MemberId = payment.MemberId,
+                MemberName = memberName,
+
+                // A counter sale is not "about" the member, so the grid says Others while the
+                // receipt still names them.
+                MemberDisplay = category == PaymentCategories.Sales ? "Others" : memberName,
+
+                Category = category,
+                ProcessedByUserId = payment.ProcessedByUserId,
+                ProcessedBy = string.IsNullOrWhiteSpace(payment.ProcessedBy)
+                    ? "—"
+                    : payment.ProcessedBy,
+
+                SubscriptionId = payment.SubscriptionId,
+                PlanName = payment.Subscription?.Plan?.PlanName ?? "- general -",
+                SaleId = payment.SaleId,
+                AppliesTo = payment.SaleId.HasValue
+                    ? $"Sale #{payment.SaleId}"
+                    : payment.SubscriptionId.HasValue
+                        ? $"Membership - {payment.Subscription?.Plan?.PlanName ?? $"#{payment.SubscriptionId}"}"
+                        : "General",
+                Amount = payment.Amount,
+                PaymentDate = payment.PaymentDate,
+                Method = payment.Method,
+                ReferenceNo = payment.ReferenceNo,
+                Status = payment.Status,
+                Notes = payment.Notes
+            };
+        }
 
         public async Task<Payment?> GetPaymentByIdAsync(int id)
         {
@@ -234,17 +259,31 @@ namespace ERP_infrastructure.services
                 }
             }
 
+            var actor = _actor.Current;
+
             var payment = new Payment
             {
                 MemberId = memberId,
                 SubscriptionId = subscriptionId,
                 SaleId = saleId,
+
+                // Derived, never taken from the caller. A payment's category is a fact about
+                // what it is attached to, so letting a client name it would only create rows
+                // whose label disagrees with their own foreign keys.
+                Category = PaymentCategories.Infer(subscriptionId, saleId),
+
                 Amount = amount,
                 PaymentDate = paymentDate == default ? DateTime.UtcNow : paymentDate,
                 Method = NormaliseMethod(method),
                 ReferenceNo = (referenceNo ?? string.Empty).Trim(),
                 Status = normalisedStatus,
                 Notes = (notes ?? string.Empty).Trim(),
+
+                // The cashier is whoever the token says is signed in - not a name the client
+                // supplies, which is the whole point of recording it.
+                ProcessedByUserId = actor.AppUserId,
+                ProcessedBy = actor.DisplayName,
+
                 CreatedAt = DateTime.UtcNow
             };
 

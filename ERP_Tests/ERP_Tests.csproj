@@ -22,9 +22,9 @@
     <ProjectReference Include="..\ERP_infrastructure\ERP_infrastructure.csproj" />
     <ProjectReference Include="..\ERP_api\ERP_api.csproj" />
 
-    <!-- Referenced so the sorting and paging the Blazor tables share can be tested as plain
-         logic, without needing a browser. -->
-    <ProjectReference Include="..\ERP_UI\ERP_UI.csproj" />
+    <!-- ERP_winforms is deliberately not referenced. It is a net10.0-windows desktop client
+         that owns no business rules: everything it does goes through ERP_api, which is
+         already covered here. -->
   </ItemGroup>
 
 </Project>

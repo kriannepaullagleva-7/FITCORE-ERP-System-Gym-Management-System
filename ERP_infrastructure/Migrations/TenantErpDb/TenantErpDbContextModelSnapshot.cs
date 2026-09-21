@@ -429,6 +429,13 @@ namespace ERP_infrastructure.Migrations.TenantErpDb
                         .HasPrecision(18, 2)
                         .HasColumnType("decimal(18,2)");
 
+                    b.Property<string>("Category")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)")
+                        .HasDefaultValue("General");
+
                     b.Property<DateTime>("CreatedAt")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("datetime2")
@@ -456,6 +463,16 @@ namespace ERP_infrastructure.Migrations.TenantErpDb
                         .HasColumnType("datetime2")
                         .HasDefaultValueSql("GETUTCDATE()");
 
+                    b.Property<string>("ProcessedBy")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(150)
+                        .HasColumnType("nvarchar(150)")
+                        .HasDefaultValue("");
+
+                    b.Property<int?>("ProcessedByUserId")
+                        .HasColumnType("int");
+
                     b.Property<string>("ReferenceNo")
                         .IsRequired()
                         .ValueGeneratedOnAdd()
@@ -480,6 +497,8 @@ namespace ERP_infrastructure.Migrations.TenantErpDb
                         .HasColumnType("datetime2");
 
                     b.HasKey("PaymentId");
+
+                    b.HasIndex("Category");
 
                     b.HasIndex("MemberId");
 
@@ -555,6 +574,16 @@ namespace ERP_infrastructure.Migrations.TenantErpDb
 
                     b.Property<DateTime>("PeriodStart")
                         .HasColumnType("datetime2");
+
+                    b.Property<string>("ProcessedBy")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(150)
+                        .HasColumnType("nvarchar(150)")
+                        .HasDefaultValue("");
+
+                    b.Property<int?>("ProcessedByUserId")
+                        .HasColumnType("int");
 
                     b.Property<string>("Status")
                         .IsRequired()
@@ -650,6 +679,16 @@ namespace ERP_infrastructure.Migrations.TenantErpDb
                         .HasMaxLength(300)
                         .HasColumnType("nvarchar(300)")
                         .HasDefaultValue("");
+
+                    b.Property<string>("ProcessedBy")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(150)
+                        .HasColumnType("nvarchar(150)")
+                        .HasDefaultValue("");
+
+                    b.Property<int?>("ProcessedByUserId")
+                        .HasColumnType("int");
 
                     b.Property<DateTime>("SaleDate")
                         .HasColumnType("datetime2");

@@ -48,6 +48,44 @@ namespace ERP_UI.Services
             SendAsync<object>(() => Http.DeleteAsync($"{BasePath}/{id}"));
     }
 
+    public class CustomerApiService : ApiServiceBase
+    {
+        private const string BasePath = "api/customers";
+
+        public CustomerApiService(HttpClient http) : base(http) { }
+
+        public Task<ApiResult<List<CustomerDto>>> GetAllAsync() =>
+            SendAsync<List<CustomerDto>>(() => Http.GetAsync(BasePath));
+
+        public Task<ApiResult<CustomerDto>> CreateAsync(CreateCustomerDto dto) =>
+            SendAsync<CustomerDto>(() => Http.PostAsJsonAsync(BasePath, dto));
+
+        public Task<ApiResult<CustomerDto>> UpdateAsync(int id, UpdateCustomerDto dto) =>
+            SendAsync<CustomerDto>(() => Http.PutAsJsonAsync($"{BasePath}/{id}", dto));
+
+        public Task<ApiResult<object>> DeleteAsync(int id) =>
+            SendAsync<object>(() => Http.DeleteAsync($"{BasePath}/{id}"));
+    }
+
+    public class SupplierApiService : ApiServiceBase
+    {
+        private const string BasePath = "api/suppliers";
+
+        public SupplierApiService(HttpClient http) : base(http) { }
+
+        public Task<ApiResult<List<SupplierDto>>> GetAllAsync() =>
+            SendAsync<List<SupplierDto>>(() => Http.GetAsync(BasePath));
+
+        public Task<ApiResult<SupplierDto>> CreateAsync(CreateSupplierDto dto) =>
+            SendAsync<SupplierDto>(() => Http.PostAsJsonAsync(BasePath, dto));
+
+        public Task<ApiResult<SupplierDto>> UpdateAsync(int id, UpdateSupplierDto dto) =>
+            SendAsync<SupplierDto>(() => Http.PutAsJsonAsync($"{BasePath}/{id}", dto));
+
+        public Task<ApiResult<object>> DeleteAsync(int id) =>
+            SendAsync<object>(() => Http.DeleteAsync($"{BasePath}/{id}"));
+    }
+
     public class InventoryApiService : ApiServiceBase
     {
         private const string BasePath = "api/inventory";

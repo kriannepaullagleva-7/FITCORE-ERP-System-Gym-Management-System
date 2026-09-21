@@ -61,6 +61,20 @@ namespace ERP_api.Controllers
                 nameof(GetById), new { id = created.SupplierId }, created.ToDto());
         }
 
+        [HttpPut("{id:int}")]
+        [ProducesResponseType(typeof(SupplierDto), StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status404NotFound)]
+        public async Task<ActionResult<SupplierDto>> Update(
+            int id, [FromBody] UpdateSupplierDto dto)
+        {
+            var updated = await _supplierService.UpdateSupplierAsync(
+                id, dto.SupplierCode, dto.SupplierName, dto.ContactPerson,
+                dto.ContactNumber, dto.EmailAddress, dto.Address, dto.IsActive);
+
+            return updated is null ? NotFound() : Ok(updated.ToDto());
+        }
+
         [HttpDelete("{id:int}")]
         [ProducesResponseType(StatusCodes.Status204NoContent)]
         [ProducesResponseType(StatusCodes.Status404NotFound)]

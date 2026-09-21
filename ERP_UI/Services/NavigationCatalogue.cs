@@ -32,8 +32,15 @@ namespace ERP_UI.Services
                 new NavEntry("New Sale",         "fitcore/pos",              "plus",         Modules.Sales),
                 new NavEntry("Sales",            "fitcore/sales",            "sales",        Modules.Sales),
                 new NavEntry("Payments",         "fitcore/payments",         "payment",      Modules.Payments),
+
+                // Gated to match the controllers: CustomersController requires Sales and
+                // SuppliersController requires Inventory, so the sidebar asks for the same
+                // module the API will check.
+                new NavEntry("Customers",        "fitcore/customers",        "customer",     Modules.Sales),
+
                 new NavEntry("Products",         "fitcore/products",         "product",      Modules.Inventory),
-                new NavEntry("Inventory",        "fitcore/inventory",        "inventory",    Modules.Inventory)
+                new NavEntry("Inventory",        "fitcore/inventory",        "inventory",    Modules.Inventory),
+                new NavEntry("Suppliers",        "fitcore/suppliers",        "supplier",     Modules.Inventory)
             }),
 
             new NavGroup("Small Enterprise", new[]

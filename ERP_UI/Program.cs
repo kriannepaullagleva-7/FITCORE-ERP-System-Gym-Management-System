@@ -44,6 +44,8 @@ builder.Services.AddScoped<MembershipPlanApiService>();
 builder.Services.AddScoped<ReportsApiService>();
 builder.Services.AddScoped<ProductApiService>();
 builder.Services.AddScoped<InventoryApiService>();
+builder.Services.AddScoped<CustomerApiService>();
+builder.Services.AddScoped<SupplierApiService>();
 builder.Services.AddScoped<SubscriptionApiService>();
 builder.Services.AddScoped<PaymentApiService>();
 builder.Services.AddScoped<SaleApiService>();

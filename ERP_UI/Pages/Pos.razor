@@ -3,6 +3,7 @@
 @inject InventoryApiService InventoryApi
 @inject MemberApiService MemberApi
 @inject EmployeeApiService EmployeeApi
+@inject AuthApiService Auth
 @inject SaleApiService SaleApi
 @inject PaymentApiService PaymentApi
 @inject ToastService Toasts
@@ -157,16 +158,20 @@ else
                     }
                 </div>
 
-                <div class="fc-field">
-                    <label class="fc-label" for="pos-cashier">Cashier</label>
-                    <select id="pos-cashier" class="fc-select" @bind="cashierId">
-                        <option value="">- unassigned -</option>
-                        @foreach (var employee in employees)
-                        {
-                            <option value="@employee.EmployeeId">@employee.FullName</option>
-                        }
-                    </select>
-                </div>
+                @* Absent entirely on a tier without Employees: the list would always be empty. *@
+                @if (Auth.Can(Modules.Employees))
+                {
+                    <div class="fc-field">
+                        <label class="fc-label" for="pos-cashier">Cashier</label>
+                        <select id="pos-cashier" class="fc-select" @bind="cashierId">
+                            <option value="">- unassigned -</option>
+                            @foreach (var employee in employees)
+                            {
+                                <option value="@employee.EmployeeId">@employee.FullName</option>
+                            }
+                        </select>
+                    </div>
+                }
 
                 @if (cart.Count == 0)
                 {
@@ -371,8 +376,15 @@ else
         var memberResult = await MemberApi.GetAllAsync();
         if (memberResult.IsSuccess) members = memberResult.Value ?? new();
 
-        var employeeResult = await EmployeeApi.GetActiveAsync();
-        if (employeeResult.IsSuccess) employees = employeeResult.Value ?? new();
+        // Only ask for staff when this user's tier actually licenses Employees. A Micro tenant
+        // has no such module, so requesting it fired a 403 on every POS load - a failed request
+        // the operator never asked for. The cashier picker is optional, so it simply does not
+        // appear for them.
+        if (Auth.Can(Modules.Employees))
+        {
+            var employeeResult = await EmployeeApi.GetActiveAsync();
+            if (employeeResult.IsSuccess) employees = employeeResult.Value ?? new();
+        }
 
         isLoading = false;
     }

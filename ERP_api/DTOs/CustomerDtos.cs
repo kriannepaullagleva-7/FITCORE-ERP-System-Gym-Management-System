@@ -35,6 +35,15 @@ namespace ERP_api.DTOs
         public string? Address { get; set; }
     }
 
+    /// <summary>
+    /// Carries IsActive so a customer can be retired without being deleted, which is what an
+    /// operator normally wants for master data that history may still reference.
+    /// </summary>
+    public class UpdateCustomerDto : CreateCustomerDto
+    {
+        public bool IsActive { get; set; } = true;
+    }
+
     public class SupplierDto
     {
         public int SupplierId { get; set; }
@@ -70,5 +79,13 @@ namespace ERP_api.DTOs
 
         [StringLength(300)]
         public string? Address { get; set; }
+    }
+
+    /// <summary>
+    /// Carries IsActive so a supplier can be retired without being deleted.
+    /// </summary>
+    public class UpdateSupplierDto : CreateSupplierDto
+    {
+        public bool IsActive { get; set; } = true;
     }
 }

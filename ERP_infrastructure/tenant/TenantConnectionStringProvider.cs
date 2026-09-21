@@ -55,6 +55,18 @@ namespace ERP_infrastructure.tenant
                         "configured fallback is disabled.", ex);
                 }
 
+                // The fallback names exactly one company. Serving any other company from it
+                // would hand one tenant another tenant's database - which is precisely how
+                // Small-tier data ended up written into the Micro tenant.
+                if (_options.FallbackCompanyId != companyId)
+                {
+                    throw new TenantResolutionException(
+                        $"The database for company {companyId} could not be resolved. The fallback " +
+                        $"connection string is bound to company {_options.FallbackCompanyId}, so it " +
+                        "was not used: serving one company from another company's database would " +
+                        "leak tenant data. Fix the CompanyDatabases row for this company.", ex);
+                }
+
                 var fallback = _configuration.GetConnectionString(_options.FallbackConnectionStringName);
 
                 if (string.IsNullOrWhiteSpace(fallback))

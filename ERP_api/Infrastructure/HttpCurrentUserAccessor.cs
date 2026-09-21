@@ -42,7 +42,13 @@ namespace ERP_api.Infrastructure
                     IpAddress: http.Connection.RemoteIpAddress?.ToString(),
                     DeviceId: http.Request.Headers.TryGetValue("X-Device-Id", out var device)
                         ? device.ToString()
-                        : null);
+                        : null,
+
+                    // Both are already in the signed token. The name is what a receipt
+                    // prints; the employee id is how a till transaction is attributed to a
+                    // roster entry without the client naming a cashier of its choosing.
+                    FullName: user.GetFullName(),
+                    EmployeeId: user.GetEmployeeId());
             }
         }
     }

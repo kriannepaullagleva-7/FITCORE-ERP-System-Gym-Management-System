@@ -508,4 +508,62 @@ namespace ERP_UI.DTOs
         public string CredentialKey { get; set; } = "";
         public bool IsActive { get; set; } = true;
     }
+
+    // ----------------------------------------------------------------------------------
+    // Customers and Suppliers - tenant master data behind /api/customers and /api/suppliers.
+    // ----------------------------------------------------------------------------------
+
+    public class CustomerDto
+    {
+        public int CustomerId { get; set; }
+        public string CustomerCode { get; set; } = "";
+        public string CustomerName { get; set; } = "";
+        public string? ContactNumber { get; set; }
+        public string? EmailAddress { get; set; }
+        public string? Address { get; set; }
+        public bool IsActive { get; set; }
+        public DateTime CreatedAt { get; set; }
+    }
+
+    public class CreateCustomerDto
+    {
+        public string CustomerCode { get; set; } = "";
+        public string CustomerName { get; set; } = "";
+        public string? ContactNumber { get; set; }
+        public string? EmailAddress { get; set; }
+        public string? Address { get; set; }
+    }
+
+    public class UpdateCustomerDto : CreateCustomerDto
+    {
+        public bool IsActive { get; set; } = true;
+    }
+
+    public class SupplierDto
+    {
+        public int SupplierId { get; set; }
+        public string SupplierCode { get; set; } = "";
+        public string SupplierName { get; set; } = "";
+        public string? ContactPerson { get; set; }
+        public string? ContactNumber { get; set; }
+        public string? EmailAddress { get; set; }
+        public string? Address { get; set; }
+        public bool IsActive { get; set; }
+        public DateTime CreatedAt { get; set; }
+    }
+
+    public class CreateSupplierDto
+    {
+        public string SupplierCode { get; set; } = "";
+        public string SupplierName { get; set; } = "";
+        public string? ContactPerson { get; set; }
+        public string? ContactNumber { get; set; }
+        public string? EmailAddress { get; set; }
+        public string? Address { get; set; }
+    }
+
+    public class UpdateSupplierDto : CreateSupplierDto
+    {
+        public bool IsActive { get; set; } = true;
+    }
 }

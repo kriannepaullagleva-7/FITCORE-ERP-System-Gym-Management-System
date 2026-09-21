@@ -1,6 +1,6 @@
 # FitCore ERP System
 
-Multi-tenant SaaS ERP for gyms. ASP.NET Core 10 Web API, Blazor WebAssembly client,
+Multi-tenant SaaS ERP for gyms. WinForms desktop client, ASP.NET Core 10 Web API,
 EF Core 10, SQL Server, database-per-company.
 
 Everything below describes what the code actually does. Where a feature is not built, it says
@@ -12,9 +12,9 @@ so. Nothing here is aspirational.
 
 | | |
 |---|---|
-| Build | ✅ 0 errors, 0 warnings |
-| Tests | ✅ 135 passing |
-| EF model vs migrations | ✅ both contexts in sync |
+| Build | ✅ 0 errors, 0 warnings (`--no-incremental`, whole solution) |
+| Tests | ✅ 131 passing |
+| EF model vs migrations | ✅ both contexts in sync, no pending migrations on any database |
 | Micro Enterprise | ✅ working end to end against the live database |
 | Small Enterprise | ✅ working end to end, including Employees and Payroll |
 | Medium Enterprise | ❌ tier is defined and enforced; none of its features are built |
@@ -27,29 +27,94 @@ so. Nothing here is aspirational.
 ERP_domain          POCO entities and the module catalogue. No dependencies.
 ERP_infrastructure  DbContexts, repositories, services, tenancy. No ASP.NET Core reference.
 ERP_api             Thin MVC controllers, JWT, tenant middleware.        https://localhost:7214
-ERP_UI              Blazor WebAssembly client.                           https://localhost:7031
 ERP_Tests           xUnit: unit, service (SQLite) and HTTP integration tests.
-ERP_Project1        WinForms desktop app (ERP_winforms.csproj). Legacy, single-tenant.
+ERP_Project1        WinForms desktop client (ERP_winforms.csproj) — the only user-facing app.
 ```
 
-`ERP_infrastructure` deliberately has no ASP.NET Core reference — it is consumed by the desktop
-application as well as the API. Anything HTTP-aware lives in `ERP_api` behind an interface.
+`ERP_infrastructure` deliberately has no ASP.NET Core reference. Anything HTTP-aware lives in
+`ERP_api` behind an interface.
+
+**`ERP_winforms` references neither `ERP_infrastructure` nor EF Core.** Its only packages are
+`Microsoft.Extensions.Configuration{,.Json,.Binder}`, so there is no way for a screen to open a
+DbContext or see a connection string — the compiler prevents it. Every byte of business data
+arrives over HTTP from the API, which owns tenancy, authorisation and the business rules.
+
+`ERP_UI` (Blazor WebAssembly) is **retired**. The folder is still on disk but is not a member
+of `ERP_Project1.slnx`, so it is not restored, built or deployed. WinForms is the UI.
 
 ### Request flow
 
 ```
-Browser → ERP_UI → HTTPS/JSON → ERP_api controller
-                                      ↓
-                                   Service  (business rules)
-                                      ↓
-                                 Repository  (queries)
-                                      ↓
-                              TenantErpDbContext  (bound to the caller's company)
-                                      ↓
-                               that tenant's own database
+ERP_winforms → HTTPS/JSON + Bearer JWT → ERP_api controller
+                                              ↓
+                                           Service  (business rules)
+                                              ↓
+                                         Repository  (queries)
+                                              ↓
+                                      TenantErpDbContext  (bound to the caller's company)
+                                              ↓
+                                       that tenant's own database
 ```
 
 The master database is reached separately, for sign-in and the tenant registry.
+
+---
+
+## The desktop client
+
+One setting: `ApiBaseUrl` in `ERP_Project1/appsettings.json` (override per machine with the
+gitignored `appsettings.Local.json`). No connection string, no credentials.
+
+```
+Program        sign in → shell → sign out → sign in again, without restarting the process
+LoginForm      the only way in; posts to /api/auth/login
+ShellForm      sidebar, topbar, module routing, session-expiry handling
+ModuleWorkspace  a module and its submodules on a tab strip
+ModulePageBase   the frame: toolbar, stats, filters, body, status strip, loading/empty states
+CrudPageBase<T>  list-and-maintain: search, grid, Add/Edit/Delete, confirmations, messages
+EditDialog       field-descriptor form with client-side validation
+ListDialog       read-only detail grid (sale lines, stock ledger, pay history)
+UiTheme/UiKit    the design tokens and the control library
+Api/             FitCoreSession + typed API services + DTOs. No WinForms reference.
+```
+
+### Navigation
+
+The sidebar lists **modules**; each module opens a workspace whose submodules are tabs. That
+keeps the sidebar to the things a gym actually does rather than the fourteen screens it takes
+to do them.
+
+```
+MAIN         Dashboard
+OPERATIONS   Membership   → Members · Membership Plans · Subscriptions
+             Payments     → Payment Transactions
+             Sales        → New Sale · Sales History · Customers
+             Inventory    → Products · Stock · Suppliers
+             Employees    → Employee Records          (Small and above)
+             Payroll      → Payroll Records           (Small and above)
+INSIGHT      Reports
+ACCOUNT      Change Password · Sign Out
+```
+
+**Employees and Payroll sit inside OPERATIONS**, as peers of Membership, Payments, Sales and
+Inventory. Whether they appear at all is the tier's decision; once they do, they are ordinary
+day-to-day work and are not separated into a group of their own. A Micro tenant simply does
+not see them, and neither does a Staff user on any tier.
+
+### Feedback, errors and validation
+
+- `EditDialog` validates **before** anything is sent: required fields, email format, whole
+  numbers, negative amounts, minimum/maximum, field length, and per-field custom rules.
+- `ApiErrorText` turns every failure into one sentence. It prefers the API's own business
+  message ("This member has subscriptions, payments or sales on record…") and falls back to a
+  canned one per status: 401 session expired, 403 no permission, 404 not found, 409 conflict,
+  5xx server problem, plus unreachable and timeout. Anything that looks like a connection
+  string, a token, a stack trace or an HTML error page is refused and replaced.
+- Confirmations name the record **and** the consequence — never a bare "Are you sure?".
+- Success is confirmed on the page's status strip; a modal is reserved for what the operator
+  cannot see, such as a completed sale.
+- A 401 anywhere raises `FitCoreSession.SessionExpired`, and the shell returns the operator to
+  the sign-in window rather than letting every screen fail in turn.
 
 ---
 
@@ -68,11 +133,16 @@ change. `ERP_domain/entities/ErpModule.cs` is the single catalogue.
 | Reports | ✅ | ✅ | ✅ |
 | Employee Management | — | ✅ | ✅ |
 | Payroll Management | — | ✅ | ✅ |
-| Expenses | — | — | ❌ not built |
-| Finance Management | — | — | ❌ not built |
-| Business Intelligence | — | — | ❌ not built |
-| User Access | — | — | ❌ screen exists, tier-gated off |
-| System Administration | — | — | ❌ API exists, tier-gated off |
+| Expenses | — | — | ⚠️ fully built, tier-gated off |
+| Finance Management | — | — | ❌ not built (permission key only) |
+| Business Intelligence | — | — | ❌ not built (permission key only) |
+| User Access | — | — | ⚠️ fully built, tier-gated off |
+| System Administration | — | — | ⚠️ fully built, tier-gated off |
+
+Three of those five are complete stacks — entity, repository, service, controller, DTOs, typed
+client and page — that are simply unreachable because no Medium tenant is enabled. Only Finance
+Management and Business Intelligence are genuinely unbuilt: they exist as keys in
+`ErpModule.cs` and in two test files, and nowhere else.
 
 **The tier is a hard ceiling.** `PermissionResolver` seeds its result from the tier's module
 list, so a permission row granting a module the company's tier does not include can never take
@@ -128,14 +198,17 @@ role still reaches everyone who has not been singled out.
 
 All created with `Bootstrap:SeedPassword` and `MustChangePassword = true`.
 
-| Username | Name | Role | Tenant |
-|---|---|---|---|
-| `admin` | Kris Santos | Admin / Owner | B (Small) |
-| `manager` | John Doe | Manager | B (Small) |
-| `staff` | Maria Santos | Receptionist / Staff | B (Small) |
-| `micro.admin` | Elena Reyes | Admin / Owner | A (Micro) |
-| `micro.manager` | Paolo Cruz | Manager | A (Micro) |
-| `micro.staff` | Ana Lim | Receptionist / Staff | A (Micro) |
+**Either the username or the email signs in** — `UserAuthenticationService` matches on both,
+which is why the field is labelled "Username or email".
+
+| Username | Email | Name | Role | Tenant |
+|---|---|---|---|---|
+| `admin` | kris.santos@fitcore.local | Kris Santos | Admin / Owner | B (Small) |
+| `manager` | john.doe@fitcore.local | John Doe | Manager | B (Small) |
+| `staff` | maria.santos@fitcore.local | Maria Santos | Receptionist / Staff | B (Small) |
+| `micro.admin` | elena.reyes@fitcore.local | Elena Reyes | Admin / Owner | A (Micro) |
+| `micro.manager` | paolo.cruz@fitcore.local | Paolo Cruz | Manager | A (Micro) |
+| `micro.staff` | ana.lim@fitcore.local | Ana Lim | Receptionist / Staff | A (Micro) |
 
 No Super Admin account is seeded — platform administration is granted deliberately, not by
 default.
@@ -192,6 +265,25 @@ protocol, port or instance is left alone.
 `AllowConnectionStringFallback = false`, `AllowHeaderOverride = false`. Configuration can relax
 them for a development machine, but a deployment that ships without a `Tenancy` section, or
 with it mistyped, gets strict tenancy rather than a quietly permissive server.
+
+### The fallback is bound to one company
+
+`FallbackCompanyId` names the single company `ConnectionStrings:TenantErp` belongs to. Zero —
+the default — means it is bound to nobody and therefore never applies, whatever
+`AllowConnectionStringFallback` is set to.
+
+This exists because an *unbound* fallback is what pooled every tenant into one database. The
+`CompanyDatabases` rows were wrong — rows 1 and 2 pointed at a dead server with an empty
+`CredentialKey`, and every row belonged to `CompanyId 1` while the application served company 3
+— so every company's registry lookup threw, and the fallback answered all of them with the same
+connection string: `db68433`, the Micro tenant. Small-tier work was written into the Micro
+tenant's database, which is where a stray Employee and a Paid payroll run were later found on a
+company whose tier has neither module.
+
+The registry was repaired by `sql/FixTenantRegistry.sql` and the fallback disabled. Binding it
+to a company closes the shape of the bug rather than the instance: a second company hitting the
+same lookup failure now gets a 503, not somebody else's data. Two tests cover it — one that the
+bound company is still rescued, one that a different company is refused.
 
 ---
 
@@ -299,7 +391,7 @@ All business routes are tenant-scoped and carry no company id.
 | Sales | `GET`/`POST /api/sales`, `GET`/`DELETE /{id}`, `GET /{id}/items` |
 | Products | `GET`/`POST /api/products`, `/active`, `GET`/`PUT`/`DELETE /{id}` |
 | Inventory | `GET /api/inventory`, `/movements`, `/{productId}`, `POST /{productId}/stock-in`, `/stock-out`, `/adjust`, `PUT /{productId}/reorder-level` |
-| Customers / Suppliers | `GET`/`POST /api/customers`, `/api/suppliers`, plus `GET`/`DELETE` by id. **API only — no UI page.** |
+| Customers / Suppliers | `GET`/`POST /api/customers`, `/api/suppliers`, `GET`/`PUT`/`DELETE /{id}`. Customers is gated on Sales, Suppliers on Inventory, so both are reachable on every tier. |
 | Reports | `GET /api/reports/dashboard`, `/membership-overview` |
 | Employees | `GET`/`POST /api/employees`, `/active`, `/search?term=`, `GET`/`PUT`/`DELETE /{id}`, `GET /{id}/payrolls` |
 | Payroll | `GET`/`POST /api/payroll`, `/summary`, `GET`/`PUT`/`DELETE /{id}`, `PATCH /{id}/status` |
@@ -343,6 +435,7 @@ reference. Neither is exposed outside Development.
     "DefaultCompanyId": 0,                 // none
     "AllowHeaderOverride": false,          // and ignored outside Development regardless
     "AllowConnectionStringFallback": false,
+    "FallbackCompanyId": 0,                // the fallback belongs to this one company only
     "EnableCrossTenantAdminApi": false,
     "EncryptTenantConnections": false,     // see the note below
     "TrustServerCertificate": true,
@@ -388,26 +481,126 @@ text in the repository and are in the shell history of the session that removed 
 
 ## Building and running
 
-```bash
-dotnet build
-dotnet test ERP_Tests/ERP_Tests.csproj
+### Solution layout
 
-cd ERP_api && dotnet run     # https://localhost:7214, docs at /scalar/v1
-cd ERP_UI  && dotnet run     # https://localhost:7031
+The solution is `ERP_Project1.slnx` (XML format, not `.sln`). Five projects:
+
+| Project file | Role |
+|---|---|
+| `ERP_Project1/ERP_winforms.csproj` | WinForms desktop client — **the only UI**, listed first |
+| `ERP_api/ERP_api.csproj` | Web API — **EF startup project** |
+| `ERP_infrastructure/ERP_infrastructure.csproj` | DbContexts, repositories, services — **EF migrations project** |
+| `ERP_domain/ERP_domain.csproj` | Entities and the module catalogue |
+| `ERP_Tests/ERP_Tests.csproj` | xUnit |
+
+**The folder and the assembly disagree on the first one.** The WinForms project lives in the
+`ERP_Project1` folder but is named `ERP_winforms.csproj`. `ERP_winforms\ERP_winforms.csproj`
+does not exist and never has.
+
+`ERP_winforms` is listed first because it is the product. That does mean the Package Manager
+Console defaults to it, and EF will answer *"No DbContext was found in assembly
+'ERP_winforms'"* — correctly, because it holds none. **Always pass `--project
+ERP_infrastructure --startup-project ERP_api` to every `dotnet ef` command**, as the examples
+below do; then the default selection does not matter.
+
+`ERP_Project1.slnLaunch` defines three Visual Studio launch profiles: **FitCore Desktop
+(API + WinForms)** for the normal flow, **FitCore WinForms only**, and **FitCore API only**.
+Pick one from the Start button's dropdown.
+
+### From the terminal
+
+`fitcore.ps1` at the repo root wraps the whole workflow, and every build path stops the
+running applications first so the assembly-lock failure below cannot happen:
+
+```powershell
+.\fitcore.ps1 stop      # stop FitCore processes, verify nothing holds the build output
+.\fitcore.ps1 build     # stop, clean, restore, build
+.\fitcore.ps1 rebuild   # as build, but removes bin/obj first
+.\fitcore.ps1 db        # migration state for master and both tenants
+.\fitcore.ps1 update    # apply pending migrations to all three databases
+.\fitcore.ps1 api       # start ERP_api and wait for the port
+.\fitcore.ps1 ui        # start ERP_winforms
+.\fitcore.ps1 run       # build, start the API, wait, start the desktop client
+.\fitcore.ps1 test      # dotnet test
 ```
+
+It only ever stops processes whose executable lives under this repository, so an unrelated
+`dotnet` tool is left alone.
+
+By hand, the same thing is:
+
+```powershell
+dotnet restore
+dotnet build ERP_Project1.slnx
+dotnet test ERP_Tests\ERP_Tests.csproj
+
+# 1. the API first - the desktop client cannot sign in without it
+dotnet run --project ERP_api\ERP_api.csproj --launch-profile https    # https://localhost:7214
+
+# 2. then the desktop client, in a second terminal
+dotnet run --project ERP_Project1\ERP_winforms.csproj
+```
+
+The solution root is not itself a project, so a bare `dotnet run` there fails with
+*"Couldn't find a project to run"*. That is expected; always pass `--project`.
+
+The desktop client will not start before the API: it shows
+*"Unable to connect to the FitCore server. Please make sure the server is running and try
+again."* on the sign-in screen, which is the intended behaviour rather than a crash.
+
+A running `ERP_winforms.exe` or `ERP_api` holds a lock on its own output assembly, so
+**stop them before rebuilding** or MSBuild fails with `MSB3021 … being used by another
+process`.
 
 The databases are remote (`*.public.databaseasp.net`). There is no local SQL Server.
 
 ### Migrations
 
-```bash
-cd ERP_infrastructure
-dotnet ef migrations add "Name" --context TenantErpDbContext --output-dir Migrations/TenantErpDb
-dotnet ef database update --context TenantErpDbContext
-dotnet ef database update --context MasterErpDbContext
+Run them with the infrastructure project as the target and the API as the startup project:
+
+```powershell
+dotnet ef database update --context MasterErpDbContext ^
+    --project ERP_infrastructure --startup-project ERP_api
+
+dotnet ef database update --context TenantErpDbContext ^
+    --project ERP_infrastructure --startup-project ERP_api
 ```
 
-Point them at a specific database with `TENANT_ERP_CONNECTION` / `MASTER_ERP_CONNECTION`.
+In the Package Manager Console the equivalent is:
+
+```powershell
+Update-Database -Context MasterErpDbContext -Project ERP_infrastructure -StartupProject ERP_api
+Update-Database -Context TenantErpDbContext -Project ERP_infrastructure -StartupProject ERP_api
+```
+
+Passing both switches explicitly means the Default project dropdown does not matter. Never run
+migrations against `ERP_winforms`.
+
+**There is one tenant schema but three tenant databases**, so "update the tenant database" is
+ambiguous. Left alone it targets `TenantErp`, which is **tenant_a**. Name a different one with
+`TENANT_ERP_CONNECTION_NAME`:
+
+```powershell
+$env:TENANT_ERP_CONNECTION_NAME = "TenantErpB"   # tenant_b, db68484
+dotnet ef database update --context TenantErpDbContext `
+    --project ERP_infrastructure --startup-project ERP_api
+Remove-Item Env:\TENANT_ERP_CONNECTION_NAME
+```
+
+Every design-time command prints the database it resolved before it does anything:
+
+```
+[EF design-time] target -> tcp:db68484.public.databaseasp.net,1433 / db68484  (from …\ERP_api)
+```
+
+Read that line. A migration applied to the wrong tenant is the expensive mistake here.
+
+`TENANT_ERP_CONNECTION` / `MASTER_ERP_CONNECTION` still override with a full connection string.
+
+The design-time factories layer `appsettings.Development.json` and
+`appsettings.MonsterASP.json` over `appsettings.json`, exactly as the applications do. Without
+that layering the tools read the committed password-less entry, dropped to Named Pipes and
+failed with *"the server was not found"* against a server that was up.
 
 **Always `dotnet build` before `dotnet ef ... --no-build`.** A stale assembly makes EF report
 pending model changes that do not exist, and makes it run against the wrong schema.
@@ -418,7 +611,7 @@ Both contexts are in sync with their snapshots.
 
 ## Testing
 
-135 tests. `dotnet test ERP_Tests/ERP_Tests.csproj`
+131 tests. `dotnet test ERP_Tests/ERP_Tests.csproj`
 
 - **Authorization over real HTTP** (`ApiAuthorizationTests`) — anonymous callers refused
   everywhere but sign-in; Micro refused every module above its tier even as Admin; Small reaches
@@ -432,15 +625,34 @@ Both contexts are in sync with their snapshots.
 - **Tenant resolution** — claim beats header, header ignored outside Development, an
   unauthenticated claim is not trusted.
 - **Connection strings** — registry lookup, fallback, failure cases, and that a password
-  containing connection-string syntax survives intact.
+  containing connection-string syntax survives intact. Also that the fallback is refused for a
+  company it is not bound to, and that an unbound fallback never applies at all.
 - **Audit trail** — attribution, generated keys, changed-properties-only updates, that the trail
   does not record itself, and that no password hash ever reaches it.
 - **Service rules** — member delete guards, duplicate product codes, stock arithmetic, sale
   transactions, payroll calculation and overlapping periods. Run against real SQLite.
 
-There are no browser-driven UI tests. The Blazor client is verified as serving and wired
-(host page, WASM assembly, config, CORS preflight from both configured origins), but its pages
-have **not** been clicked through in a browser in this session.
+There are no *automated* desktop-UI tests in the suite. Two things were done by hand instead,
+and both are reproducible.
+
+**The desktop client's own API layer, driven headlessly.** `ERP_Project1/Api` has no WinForms
+reference, so it compiles into a plain console host and can be run against a live API. Doing
+that exercises the exact `FitCoreSession`, typed services and DTOs the screens use: 91
+assertions per tenant covering CRUD on every entity, the sale/stock/rollback path, the payroll
+overlap and paid-run locks, the member delete guard, and the wording of 400/403/404/offline
+failures. Run for `admin`, `manager`, `staff`, `micro.admin`, `micro.manager` and
+`micro.staff`. That harness is not checked in; it is a `.csproj` with
+`<Compile Include="…/ERP_Project1/Api/*.cs" />` and one `Main`.
+
+**The application itself, driven through Win32.** Sign-in through the real form, every module
+and tab opened against the live tenant databases, a member created / edited / deleted through
+the dialogs with the writes verified in `db68484`, the required-field and email validation
+refusing to submit, the delete confirmation and its consequence text, the empty and
+no-matches states, sign out and sign in again as a different user without restarting.
+
+Micro was checked for the opposite property: no Employees or Payroll anywhere in the sidebar,
+no employee or payroll cards on the dashboard, and no "Add employee" quick action. Staff on
+the Small tenant additionally loses Reports, so the INSIGHT group disappears entirely.
 
 ---
 
@@ -468,13 +680,19 @@ Not yet done: no publish profile, no `web.config`.
    supported in any form. ❌
 4. **Micro and Small have no in-app user management**, by the tier decision above. Accounts come
    from the `Bootstrap` section. ⚠️
-5. **`/api/customers` and `/api/suppliers` have no UI page.** Reachable API surface with no
-   screen behind it. ⚠️
-6. **`ERP_UI/DTOs` duplicates `ERP_api/DTOs`**, deliberately, so the client keeps zero project
-   references. A shared contracts project would remove the duplication. ⚠️
-7. **The desktop app has no tenant concept.** `ERP_winforms` binds `TenantErpDbContext` to the
-   fixed `TenantErp` connection string, so it always talks to Tenant A and knows nothing about
-   sign-in, roles or tiers. Legacy. ⚠️
+5. ~~`/api/customers` and `/api/suppliers` have no UI page.~~ **Done.** Both now have a page
+   under Operations with list, search, status filter, create, edit, delete, validation,
+   pagination and empty states. The `PUT` endpoints and the duplicate-code guards they need
+   were added at the same time — the controllers previously offered no update at all. ✅
+6. **`ERP_Project1/Api` duplicates `ERP_api/DTOs`**, deliberately, so the desktop client keeps
+   zero project references and cannot reach EF Core. A shared contracts project would remove
+   the duplication at the cost of that guarantee. ⚠️
+7. ~~The desktop app has no tenant concept.~~ **Done.** `ERP_winforms` is now a pure API
+   consumer: it signs in, carries a bearer token, and the company travels inside that token,
+   so the desktop cannot choose or influence its tenant. It holds no connection string and
+   references neither EF Core nor `ERP_infrastructure`. ✅
+7b. **`ERP_UI` (Blazor) is retired but not deleted.** It is out of the solution and is not
+   built; the folder remains only so the work is not lost. Delete it when you are sure. ⚠️
 8. **Empty migration** `20260915173453_AddSuppliersToTenantErp` is a no-op left in the chain.
    Harmless; it is already applied.
 9. **Email validation is enforced on write.** One existing member record holds a malformed
@@ -506,8 +724,16 @@ fallback is disabled. The server log has the real reason.
 **403 on `/api/users` or `/api/expenses`** — expected on Micro and Small. Those are Medium
 modules.
 
-**Blazor shows "The API could not be reached"** — check `ERP_UI/wwwroot/appsettings.json`
-`ApiBaseUrl` against the API port, and that the UI origin is in `Cors:AllowedOrigins`.
+**The desktop says "Unable to connect to the FitCore server"** — the API is not running, or
+`ApiBaseUrl` in `ERP_Project1/appsettings.json` does not match the port it is listening on.
+The sign-in screen prints the address it is trying underneath the button. CORS is not
+involved: a desktop client is not a browser.
+
+**"Your session has expired. Please sign in again."** — the token lapsed (eight hours by
+default) or the API restarted with a different signing key. The shell returns to sign-in.
+
+**MSB3021 / MSB3027 "being used by another process" when building** — `ERP_winforms.exe` or
+the API is still running and holding its own assembly. Stop them and build again.
 
 ---
 
@@ -518,11 +744,16 @@ modules.
 - Declare literal routes (`active`, `search`) before parameter routes, and constrain ids with `:int`.
 - Never accept a tenant identifier from the client on a business endpoint.
 - Adding a feature: entity → `DbSet` and configuration → repository → service → register in
-  `AddErpApplicationServices` → DTOs and `ToDto()` → controller → migration → typed API service
-  and page in `ERP_UI`.
+  `AddErpApplicationServices` → DTOs and `ToDto()` → controller → migration → DTO and typed
+  service in `ERP_Project1/Api` → page deriving from `CrudPageBase<T>` → a `WorkspaceTab` in
+  `ShellForm.Catalogue()`.
+- Desktop screens never call `MessageBox` for a server failure: return the message from the
+  `EditDialog` save callback, or pass it to `ShowError`, so it lands in the right place.
+- New numeric fields get a `Minimum`; new text fields get a `MaxLength` matching the column.
 
-Because both the API and the desktop app bind to `ERP_infrastructure`, changing a service
-interface or an entity breaks both. Change them together.
+`ERP_winforms` does **not** reference `ERP_infrastructure`, so a change to a service interface
+or an entity cannot break it directly — only a change to the wire contract can. Keep
+`ERP_Project1/Api/*Dtos.cs` in step with `ERP_api/DTOs`.
 
 Older status reports have been moved to `docs/archive/`. They describe earlier states of the
 project and contradict each other; this file is the current one.

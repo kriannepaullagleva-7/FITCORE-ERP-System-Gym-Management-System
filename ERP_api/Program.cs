@@ -18,7 +18,12 @@ var builder = WebApplication.CreateBuilder(args);
 // one of these for the whole platform.
 // ---------------------------------------------------------------------------------------
 builder.Services.AddDbContext<MasterErpDbContext>(options =>
-    options.UseSqlServer(builder.Configuration.GetConnectionString("MasterErp")));
+    // Single query is deliberate: the sign-in path loads a user with both its role
+    // permissions and its per-user overrides, and one round trip to a remote database beats
+    // three for collections this small. Stating it also silences EF's advisory warning.
+    options.UseSqlServer(
+        builder.Configuration.GetConnectionString("MasterErp"),
+        sql => sql.UseQuerySplittingBehavior(QuerySplittingBehavior.SingleQuery)));
 
 builder.Services.AddScoped<ICompanyDirectoryService, CompanyDirectoryService>();
 

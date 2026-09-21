@@ -17,12 +17,20 @@ namespace ERP_infrastructure.services
         /// Commits the sale, its lines and the matching stock deductions as one unit of work.
         /// Unit prices are read from the product records rather than taken from the caller.
         /// </summary>
+        /// <param name="settleNow">
+        /// When true the sale is paid in full as part of the same database transaction, so a
+        /// completed counter sale and its payment can never exist without each other. Left
+        /// false for a sale put on account, which is settled later from Payments.
+        /// </param>
+        /// <param name="paymentMethod">How the money was taken, when settling immediately.</param>
         Task<Sale> CreateSaleAsync(
             int memberId,
             List<SaleLineRequest> items,
             decimal discount = 0m,
             int? cashierEmployeeId = null,
-            string notes = "");
+            string notes = "",
+            bool settleNow = false,
+            string paymentMethod = "Cash");
 
         /// <summary>
         /// Reverses a sale: stock goes back, the sale is marked Cancelled and the record stays

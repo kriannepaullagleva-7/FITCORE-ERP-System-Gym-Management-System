@@ -126,12 +126,54 @@ public class TenantConnectionStringProviderTests
         var provider = Create(
             StubResolver.Failing("no row"),
             Config(("ConnectionStrings:TenantErp", "Server=fallback;Database=fb;")),
-            new TenantOptions { AllowConnectionStringFallback = true });
+            new TenantOptions { AllowConnectionStringFallback = true, FallbackCompanyId = 7 });
 
         var result = await provider.GetConnectionAsync(7);
 
         Assert.True(result.UsedFallback);
         Assert.Equal("Server=fallback;Database=fb;", result.ConnectionString);
+    }
+
+    /// <summary>
+    /// The regression that pooled every tenant into one database.
+    ///
+    /// With the CompanyDatabases rows broken, every company's registry lookup failed. An
+    /// unbound fallback answered all of them with the same connection string, so Small-tier
+    /// work was written into the Micro tenant's database. Binding the fallback to one company
+    /// means a second company hitting the same failure is refused instead of being handed
+    /// somebody else's data.
+    /// </summary>
+    [Fact]
+    public async Task The_fallback_is_refused_for_a_company_it_is_not_bound_to()
+    {
+        var provider = Create(
+            StubResolver.Failing("no row"),
+            Config(("ConnectionStrings:TenantErp", "Server=fallback;Database=fb;")),
+            new TenantOptions { AllowConnectionStringFallback = true, FallbackCompanyId = 3 });
+
+        // Company 3 is the one the fallback belongs to, so it is still rescued.
+        var rescued = await provider.GetConnectionAsync(3);
+        Assert.True(rescued.UsedFallback);
+
+        // Company 4 must not be served company 3's database.
+        await Assert.ThrowsAsync<TenantResolutionException>(
+            () => provider.GetConnectionAsync(4));
+    }
+
+    /// <summary>
+    /// Leaving FallbackCompanyId unset makes the fallback inert, so enabling the flag without
+    /// naming its company cannot silently reopen the hole.
+    /// </summary>
+    [Fact]
+    public async Task An_unbound_fallback_never_applies()
+    {
+        var provider = Create(
+            StubResolver.Failing("no row"),
+            Config(("ConnectionStrings:TenantErp", "Server=fallback;Database=fb;")),
+            new TenantOptions { AllowConnectionStringFallback = true });
+
+        await Assert.ThrowsAsync<TenantResolutionException>(
+            () => provider.GetConnectionAsync(7));
     }
 
     [Fact]
@@ -178,7 +220,7 @@ public class TenantConnectionStringProviderTests
         var provider = Create(
             StubResolver.Failing("no row"),
             Config(),
-            new TenantOptions { AllowConnectionStringFallback = true });
+            new TenantOptions { AllowConnectionStringFallback = true, FallbackCompanyId = 7 });
 
         await Assert.ThrowsAsync<TenantResolutionException>(
             () => provider.GetConnectionAsync(7));

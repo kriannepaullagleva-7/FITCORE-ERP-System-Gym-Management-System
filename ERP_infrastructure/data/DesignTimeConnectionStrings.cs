@@ -13,38 +13,106 @@ namespace ERP_infrastructure.data
         {
             var fromEnvironment = Environment.GetEnvironmentVariable(environmentVariable);
             if (!string.IsNullOrWhiteSpace(fromEnvironment))
-                return fromEnvironment;
-
-            foreach (var settingsFile in FindSettingsFiles())
             {
+                return Announce(fromEnvironment, environmentVariable);
+            }
+
+            foreach (var directory in CandidateDirectories())
+            {
+                var baseFile = Path.Combine(directory, "appsettings.json");
+                var developmentFile = Path.Combine(directory, "appsettings.Development.json");
+                var localFile = Path.Combine(directory, "appsettings.MonsterASP.json");
+
+                if (!File.Exists(baseFile) && !File.Exists(developmentFile) && !File.Exists(localFile))
+                {
+                    continue;
+                }
+
+                // Layered exactly as the applications layer them. appsettings.json is committed
+                // and ships with empty passwords; the gitignored files carry the real ones. Without
+                // this layering the tools read the password-less entry, drop to Named Pipes and
+                // fail with "the server was not found" against a server that is up.
                 var configuration = new ConfigurationBuilder()
-                    .AddJsonFile(settingsFile, optional: true)
+                    .AddJsonFile(baseFile, optional: true)
+                    .AddJsonFile(developmentFile, optional: true)
+                    .AddJsonFile(localFile, optional: true)
                     .Build();
 
                 var connectionString = configuration.GetConnectionString(connectionName);
-                if (!string.IsNullOrWhiteSpace(connectionString))
-                    return connectionString;
+
+                if (string.IsNullOrWhiteSpace(connectionString))
+                {
+                    continue;
+                }
+
+                if (HasNoPassword(connectionString) && !IsLocal(connectionString))
+                {
+                    throw new InvalidOperationException(
+                        $"The '{connectionName}' connection string found in {baseFile} has no " +
+                        "password, and no gitignored appsettings.Development.json supplied one. " +
+                        $"Either fill it in there, or set the {environmentVariable} environment " +
+                        "variable before running the EF tools.");
+                }
+
+                return Announce(connectionString, directory);
             }
 
-            return fallback;
+            return Announce(fallback, "built-in fallback");
         }
 
-        // dotnet ef runs from whichever project directory the command was issued in, so the
-        // search walks up the tree and looks inside the two application projects that carry
-        // an appsettings.json.
-        private static IEnumerable<string> FindSettingsFiles()
+        // Design-time only, and the single most useful thing the tools can say: a migration
+        // applied to the wrong tenant database is the expensive mistake here.
+        private static string Announce(string connectionString, string source)
+        {
+            try
+            {
+                var builder = new Microsoft.Data.SqlClient.SqlConnectionStringBuilder(connectionString);
+                Console.WriteLine(
+                    $"[EF design-time] target -> {builder.DataSource} / {builder.InitialCatalog}  (from {source})");
+            }
+            catch
+            {
+                // A malformed string is the provider's problem to report, not this helper's.
+            }
+
+            return connectionString;
+        }
+
+        private static bool HasNoPassword(string connectionString)
+        {
+            try
+            {
+                var builder = new Microsoft.Data.SqlClient.SqlConnectionStringBuilder(connectionString);
+                return !builder.IntegratedSecurity && string.IsNullOrEmpty(builder.Password);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static bool IsLocal(string connectionString) =>
+            connectionString.Contains("(localdb)", StringComparison.OrdinalIgnoreCase) ||
+            connectionString.Contains("Trusted_Connection", StringComparison.OrdinalIgnoreCase) ||
+            connectionString.Contains("Integrated Security", StringComparison.OrdinalIgnoreCase);
+
+        // dotnet ef runs from whichever project directory the command was issued in, and the
+        // Package Manager Console runs from the solution directory, so the search walks up the
+        // tree and also looks inside the two application projects that carry an appsettings.json.
+        private static IEnumerable<string> CandidateDirectories()
         {
             var directory = new DirectoryInfo(Directory.GetCurrentDirectory());
 
             for (var depth = 0; depth < 4 && directory != null; depth++, directory = directory.Parent)
             {
-                var own = Path.Combine(directory.FullName, "appsettings.json");
-                if (File.Exists(own)) yield return own;
+                yield return directory.FullName;
 
-                foreach (var project in new[] { "ERP_Project1", "ERP_api" })
+                // ERP_api holds the Web API settings; ERP_Project1 is the folder the WinForms
+                // project (ERP_winforms.csproj) lives in.
+                foreach (var project in new[] { "ERP_api", "ERP_Project1" })
                 {
-                    var candidate = Path.Combine(directory.FullName, project, "appsettings.json");
-                    if (File.Exists(candidate)) yield return candidate;
+                    var candidate = Path.Combine(directory.FullName, project);
+                    if (Directory.Exists(candidate)) yield return candidate;
                 }
             }
         }

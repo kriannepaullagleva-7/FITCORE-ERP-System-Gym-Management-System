@@ -6,6 +6,7 @@
     <Nullable>enable</Nullable>
     <UseWindowsForms>true</UseWindowsForms>
     <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>ERP_Project1</RootNamespace>
   </PropertyGroup>
 
   <ItemGroup>
@@ -16,20 +17,24 @@
     <None Include="Colors\Shades.cs" />
   </ItemGroup>
 
+  <!--
+    FitCore's desktop client is a pure ERP_api consumer. It deliberately references neither
+    ERP_infrastructure nor Entity Framework: the only way it reaches business data is HTTP/JSON
+    to the API, which owns tenant resolution, authorisation and the business rules. Adding an
+    EF or infrastructure reference here would let a screen bypass all three.
+  -->
   <ItemGroup>
-    <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="10.0.12" />
-    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.12" />
+    <PackageReference Include="Microsoft.Extensions.Configuration" Version="10.0.12" />
     <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="10.0.12" />
-    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.12" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <ProjectReference Include="..\ERP_domain\ERP_domain.csproj" />
-    <ProjectReference Include="..\ERP_infrastructure\ERP_infrastructure.csproj" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Binder" Version="10.0.12" />
   </ItemGroup>
 
   <ItemGroup>
     <None Update="appsettings.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <!-- Optional per-machine override, gitignored, for pointing at a different API host. -->
+    <None Update="appsettings.Local.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>

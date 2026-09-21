@@ -23,8 +23,19 @@ namespace ERP_domain.entities
         // reversing stock movements stay auditable.
         public string Status { get; set; } = "Completed";
 
-        // Optional: the member of staff who rang the sale up.
+        // Optional: the member of staff who rang the sale up, as an Employee record. Only a
+        // tier with the Employees module has these, so it stays optional.
         public int? CashierEmployeeId { get; set; }
+
+        /// <summary>
+        /// The signed-in user who completed the sale, captured from the token rather than
+        /// chosen on screen. This is the accountable one - <see cref="CashierEmployeeId"/> is
+        /// a convenience for gyms that roster staff, and may be unset.
+        /// </summary>
+        public int? ProcessedByUserId { get; set; }
+
+        /// <summary>Their display name, denormalised so a reprinted receipt still names them.</summary>
+        public string ProcessedBy { get; set; } = string.Empty;
 
         public string Notes { get; set; } = string.Empty;
 
