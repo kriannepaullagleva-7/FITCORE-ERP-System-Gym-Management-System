@@ -418,7 +418,8 @@ namespace ERP_Project1
                     $"Close {period.DisplayName}?",
                     $"{period.EntryCount} posting(s) worth {period.TotalPosted:N2} are in this " +
                     "month. Once closed, nothing new can be posted into it - including a sale " +
-                    "or payment back-dated into it - until it is reopened."))
+                    "or payment back-dated into it - until it is reopened.",
+                    "Close period"))
             {
                 return;
             }

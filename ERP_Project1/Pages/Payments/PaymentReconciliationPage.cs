@@ -185,7 +185,8 @@ namespace ERP_Project1
                 $"Post {UiKit.Plural(_view.UnpostedPaymentCount, "missing entry")} to the ledger?",
                 $"This writes journal entries worth {UiKit.Money(_view.UnpostedPaymentAmount)} for " +
                 "payments that were taken but never posted. Anything already posted is skipped, " +
-                "so nothing is double-counted, and a closed period is refused.");
+                "so nothing is double-counted, and a closed period is refused.",
+                "Post entries");
 
             if (!confirmed) return;
 

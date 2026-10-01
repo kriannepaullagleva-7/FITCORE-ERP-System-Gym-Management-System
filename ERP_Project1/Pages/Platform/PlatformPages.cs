@@ -902,7 +902,8 @@ namespace ERP_Project1
                           "and their billing - deactivating only takes it off the list a new " +
                           "subscription can pick from."
                         : "It drops off the list a new subscription can pick from. Nobody is " +
-                          "subscribed to it yet, so nothing else changes."))
+                          "subscribed to it yet, so nothing else changes.",
+                    "Deactivate"))
             {
                 return;
             }
@@ -1065,7 +1066,8 @@ namespace ERP_Project1
             if (!activating && !UiKit.ConfirmDelete(this,
                     $"Deactivate {user.Username} at {user.CompanyName}?",
                     "They will be refused at sign-in immediately. Nothing they recorded is " +
-                    "affected, and the account can be reactivated."))
+                    "affected, and the account can be reactivated.",
+                    "Deactivate"))
             {
                 return;
             }

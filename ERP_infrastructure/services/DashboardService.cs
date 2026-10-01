@@ -366,7 +366,12 @@ namespace ERP_infrastructure.services
                 {
                     Type = "Sale",
                     Title = s.Status == "Cancelled" ? $"Sale #{s.SaleId} cancelled" : $"Sale #{s.SaleId}",
-                    Detail = s.Member.FirstName + " " + s.Member.LastName,
+
+                    // Most sales at the till are walk-ins and have no Member row; reaching
+                    // through the navigation showed the activity feed a blank name for them.
+                    Detail = s.Member == null
+                        ? (s.WalkInName ?? "Walk-In")
+                        : s.Member.FirstName + " " + s.Member.LastName,
                     Amount = s.TotalAmount,
                     OccurredAt = s.SaleDate,
                     Link = "fitcore/sales"
@@ -382,7 +387,9 @@ namespace ERP_infrastructure.services
                     Title = p.SaleId != null
                         ? "Payment for sale #" + p.SaleId
                         : p.SubscriptionId != null ? "Membership payment" : "Payment received",
-                    Detail = p.Member.FirstName + " " + p.Member.LastName + " - " + p.Method,
+                    Detail = (p.Member == null
+                        ? (p.WalkInName ?? "Walk-In")
+                        : p.Member.FirstName + " " + p.Member.LastName) + " - " + p.Method,
                     Amount = p.Amount,
                     OccurredAt = p.PaymentDate,
                     Link = "fitcore/payments"

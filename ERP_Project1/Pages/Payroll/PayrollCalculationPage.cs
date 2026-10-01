@@ -122,6 +122,10 @@ namespace ERP_Project1
 
             if (!saved || generated is null) return;
 
+            // Re-read before leaving: this employee now has a run for the period, and coming
+            // back to this tab should show that rather than offering to generate it twice.
+            await GuardAsync(() => LoadAsync(), "Refreshing…");
+
             Notify($"Pay run generated for {row.EmployeeName}. Net pay {UiKit.Money(generated.NetPay)}.");
 
             // The breakdown answers "why this amount" better than the grid can, so it is shown

@@ -96,6 +96,13 @@ namespace ERP_Project1
         /// <summary>Raised when a screen wants the shell to open another module.</summary>
         public event Action<string, string?>? NavigationRequested;
 
+        /// <summary>
+        /// Raised when this screen has successfully written something. Raised from
+        /// <see cref="Notify"/>, which every successful write already goes through, so a screen
+        /// gets this for free rather than having to remember to announce it.
+        /// </summary>
+        public event Action? DataChanged;
+
         protected void RequestNavigation(string moduleKey, string? tabKey = null) =>
             NavigationRequested?.Invoke(moduleKey, tabKey);
 
@@ -347,6 +354,13 @@ namespace ERP_Project1
         protected void Notify(string message)
         {
             StopFeedbackTimer();
+
+            // Every successful write in the application ends here - CrudPageBase's own
+            // Add/Edit/Delete and every screen-specific action alike - which makes this the one
+            // place that can tell the rest of the shell something changed. Sibling tabs and
+            // other modules cache what they last read; without this they would keep showing it,
+            // and a sale rung up on one tab would be missing from the history on the next.
+            DataChanged?.Invoke();
 
             StatusLine.ForeColor = UiTheme.Success;
             StatusLine.Text = "✓   " + message;

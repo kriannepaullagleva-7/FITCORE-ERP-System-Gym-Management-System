@@ -218,7 +218,12 @@ namespace ERP_infrastructure.services
                 .OrderBy(s => s.EndDate)
                 .Select(s => new
                 {
-                    Member = s.Member.FirstName + " " + s.Member.LastName,
+                    // A walk-in membership has no Member row at all, so the name is the one
+                    // typed onto the subscription - the same fallback every other read site
+                    // uses. Reaching through the navigation instead left the name blank.
+                    Member = s.Member == null
+                        ? (s.WalkInName ?? "Walk-In")
+                        : s.Member.FirstName + " " + s.Member.LastName,
                     Plan = s.Plan.PlanName,
                     s.EndDate,
                     s.Plan.Price

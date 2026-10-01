@@ -875,6 +875,23 @@ namespace ERP_Project1
 
                 workspace = new ModuleWorkspace(tabs);
                 workspace.NavigationRequested += async (m, t) => await NavigateAsync(m, t);
+
+                // A write reaches further than the module that made it: a sale moves stock and
+                // the ledger, a payment moves the books and every dashboard that counts them.
+                // The workspace that did the writing has already dealt with its own tabs, so
+                // only the others are dropped here.
+                var writingModule = entry.Key;
+                workspace.DataChanged += () =>
+                {
+                    foreach (var (key, other) in _workspaces)
+                    {
+                        if (!string.Equals(key, writingModule, StringComparison.OrdinalIgnoreCase))
+                        {
+                            other.InvalidateCaches();
+                        }
+                    }
+                };
+
                 _workspaces[entry.Key] = workspace;
             }
 

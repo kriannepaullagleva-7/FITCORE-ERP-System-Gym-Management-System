@@ -639,8 +639,14 @@ namespace ERP_Project1
                     : "No payment will be recorded, so the sale will show as unpaid.\r\n\r\n") +
                 "Stock is deducted when the sale is saved.";
 
-            if (MessageBox.Show(this, summary, "Confirm sale",
-                    MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+            // The one confirmation in the application that still took money behind a native
+            // Yes/No box. It names what it is about to do, like every other one now does, and
+            // the safe button is what Enter and Escape reach.
+            if (ConfirmDialog.Show(this, "Confirm sale", summary,
+                    "Complete sale", "Cancel", ButtonTone.Success) != DialogResult.Yes)
+            {
+                return;
+            }
 
             await GuardAsync(async () =>
             {

@@ -154,33 +154,43 @@ namespace ERP_Project1
 
         private async Task MakePrimaryAsync()
         {
+            if (IsBusy) return;
+
             var branch = Selected;
-            if (branch is null) return;
+            if (branch is null)
+            {
+                ShowError("Select a branch to make primary.");
+                return;
+            }
 
             if (branch.IsPrimary)
             {
-                SetStatus($"{branch.Name} is already the primary branch.");
+                ShowError($"{branch.Name} is already the primary branch.");
                 return;
             }
 
             if (!UiKit.ConfirmDelete(this,
                     $"Make “{branch.Name}” the primary branch?",
                     "A record written while no branch is selected will belong to it from now on. " +
-                    "Nothing already recorded moves."))
+                    "Nothing already recorded moves.",
+                    "Make primary"))
             {
                 return;
             }
 
-            var result = await Session.Branches.SetPrimaryAsync(branch.BranchId);
-
-            if (!result.IsSuccess)
+            await GuardAsync(async () =>
             {
-                ShowError(result.ErrorMessage);
-                return;
-            }
+                var result = await Session.Branches.SetPrimaryAsync(branch.BranchId);
 
-            await LoadAsync();
-            SetStatus($"{branch.Name} is now the primary branch.");
+                if (!result.IsSuccess)
+                {
+                    ShowError(result.ErrorMessage);
+                    return;
+                }
+
+                await LoadAsync();
+                Notify($"{branch.Name} is now the primary branch.");
+            }, "Updating…");
         }
 
         /// <summary>
@@ -190,8 +200,14 @@ namespace ERP_Project1
         /// </summary>
         private async Task TransferAsync()
         {
+            if (IsBusy) return;
+
             var source = Selected;
-            if (source is null) return;
+            if (source is null)
+            {
+                ShowError("Select the branch to transfer records out of.");
+                return;
+            }
 
             var branches = Unwrap(await Session.Branches.GetAllAsync());
 
@@ -257,8 +273,11 @@ namespace ERP_Project1
 
             if (!saved) return;
 
-            await LoadAsync();
-            SetStatus($"Records transferred out of {source.Name}.");
+            await GuardAsync(async () =>
+            {
+                await LoadAsync();
+                Notify($"Records transferred out of {source.Name} successfully.");
+            }, "Refreshing…");
         }
     }
 }

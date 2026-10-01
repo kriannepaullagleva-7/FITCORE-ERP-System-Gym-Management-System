@@ -55,6 +55,16 @@ namespace ERP_Project1
         /// <summary>Raised when a screen inside asks the shell to open another module.</summary>
         public event Action<string, string?>? NavigationRequested;
 
+        /// <summary>
+        /// Raised when any tab in this workspace wrote something. The shell listens so the
+        /// other modules' workspaces drop their caches too - a sale moves stock, the ledger and
+        /// every dashboard that counts it, none of which live in the Sales workspace.
+        /// </summary>
+        public event Action? DataChanged;
+
+        /// <summary>Drops every cached load stamp, so each tab re-reads when next opened.</summary>
+        public void InvalidateCaches() => _loadedAt.Clear();
+
         public ModulePageBase? ActivePage =>
             _activeKey is not null && _pages.TryGetValue(_activeKey, out var page) ? page : null;
 
@@ -175,6 +185,25 @@ namespace ERP_Project1
                 page.HeaderVisible = false;
                 page.Padding = new Padding(0, UiTheme.SpaceM, 0, UiTheme.SpaceS);
                 page.NavigationRequested += (m, t) => NavigationRequested?.Invoke(m, t);
+
+                // A write on one tab makes every sibling's cached rows a lie: a membership sold
+                // on Subscriptions belongs in History, a sale rung up at the till belongs in
+                // Sales History. Dropping their load stamps is enough - the next activation sees
+                // no stamp, treats them as stale and re-reads. The tab that did the writing has
+                // already refreshed itself, so it is deliberately left alone.
+                var writingTab = tab.Key;
+                page.DataChanged += () =>
+                {
+                    foreach (var key in _loadedAt.Keys.ToList())
+                    {
+                        if (!string.Equals(key, writingTab, StringComparison.OrdinalIgnoreCase))
+                        {
+                            _loadedAt.Remove(key);
+                        }
+                    }
+
+                    DataChanged?.Invoke();
+                };
 
                 _pages[tab.Key] = page;
             }

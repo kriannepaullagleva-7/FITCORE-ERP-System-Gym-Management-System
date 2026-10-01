@@ -268,7 +268,8 @@ namespace ERP_Project1
             if (!activating && !UiKit.ConfirmDelete(this,
                     $"Deactivate {user.FullName}?",
                     "They will be refused at sign-in immediately. Their history and everything " +
-                    "they recorded is untouched, and the account can be reactivated later."))
+                    "they recorded is untouched, and the account can be reactivated later.",
+                    "Deactivate"))
             {
                 return;
             }
