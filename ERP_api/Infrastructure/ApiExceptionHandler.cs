@@ -1,8 +1,10 @@
 using System.Data.Common;
 using System.Text.RegularExpressions;
+using Microsoft.EntityFrameworkCore;
 using ERP_infrastructure.tenant;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Mvc;
+using ForbiddenOperationException = ERP_infrastructure.services.ForbiddenOperationException;
 using ValidationException = ERP_infrastructure.services.ValidationException;
 
 namespace ERP_api.Infrastructure
@@ -68,6 +70,15 @@ namespace ERP_api.Infrastructure
                         "Validation failed",
                         Scrub(validation.Message));
 
+                // The caller is authenticated but not permitted to do this - a Manager trying
+                // to set a salary, a Staff member trying to manage the roster at all. Distinct
+                // from ValidationException: nothing the caller retypes will make this succeed,
+                // so it is 403, not 400.
+                case ForbiddenOperationException forbidden:
+                    return (StatusCodes.Status403Forbidden,
+                        "Not permitted",
+                        Scrub(forbidden.Message));
+
                 // The tenant could not be determined or its database configuration is unusable.
                 // The message can name servers and databases, so it is never sent to the client.
                 case TenantResolutionException:
@@ -75,6 +86,23 @@ namespace ERP_api.Infrastructure
                         "Tenant database unavailable",
                         "The database for your organisation could not be reached. " +
                         "Please contact your administrator.");
+
+                // Two callers changed the same record and this one lost.
+                //
+                // Not a fault, and not a server error: the request was well formed and the
+                // caller was entitled to make it - somebody else simply got there first, and
+                // the concurrency token on the row stopped this write from overwriting theirs.
+                // The honest answer is 409, because retrying against the current state is
+                // exactly the right thing to do and a 500 would tell the operator to give up.
+                //
+                // Stock is where this actually happens: two tills selling the last of
+                // something at the same moment. See the token on Inventory.QuantityOnHand.
+                case DbUpdateConcurrencyException:
+                    return (StatusCodes.Status409Conflict,
+                        "Someone else changed this first",
+                        "This record was changed by someone else while you were working on it, " +
+                        "so your change was not saved. Refresh to see the current figures and " +
+                        "try again.");
 
                 // Anything that reached us from the data provider is infrastructure detail.
                 case DbException:

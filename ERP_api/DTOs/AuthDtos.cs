@@ -45,6 +45,28 @@ namespace ERP_api.DTOs
 
         /// <summary>The modules this user may use. Drives the sidebar and the dashboard.</summary>
         public List<string> Modules { get; set; } = new();
+
+        /// <summary>
+        /// The subfeatures underneath those modules this user may open. Drives the tab strip
+        /// inside a module workspace. Derived on the server from the modules, the company tier
+        /// and the role level, so the desktop never has to know the tier rules.
+        /// </summary>
+        public List<string> Submodules { get; set; } = new();
+
+        /// <summary>
+        /// The branch this account is bound to, or null for somebody who works across the whole
+        /// company. Set for a branch Manager or Staff; never set for an Admin/Owner.
+        /// </summary>
+        public int? BranchId { get; set; }
+
+        /// <summary>
+        /// True when this person may create branches and switch between them. The desktop draws
+        /// its branch picker on this; the server refuses the header regardless if it is false.
+        /// </summary>
+        public bool CanManageBranches { get; set; }
+
+        /// <summary>True for the Super Admin, whose workspace is the platform rather than a gym.</summary>
+        public bool IsPlatformAdministrator { get; set; }
     }
 
     public class ChangePasswordRequestDto
@@ -74,7 +96,16 @@ namespace ERP_api.DTOs
             RoleLevel = user.RoleLevel,
             EmployeeId = user.EmployeeId,
             MustChangePassword = user.MustChangePassword,
-            Modules = user.Modules
+            Modules = user.Modules,
+
+            // Sent alongside the modules so the desktop can build its tab strips without
+            // holding a copy of the tier rules. The server re-derives this per request
+            // regardless, so it is navigation guidance and never the boundary.
+            Submodules = user.Submodules,
+            IsPlatformAdministrator = user.IsPlatformAdministrator,
+
+            BranchId = user.BranchId,
+            CanManageBranches = user.CanManageBranches
         };
     }
 }

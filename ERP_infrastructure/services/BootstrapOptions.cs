@@ -56,6 +56,41 @@ namespace ERP_infrastructure.services
         public bool Enabled { get; set; } = true;
 
         public List<BootstrapUser> Users { get; set; } = new();
+
+        /// <summary>
+        /// The branches this company runs, and the staff at each one.
+        ///
+        /// Only read for a Medium tenant - branching is a Medium feature, and a Micro or Small
+        /// company listing branches here is a configuration mistake rather than an instruction.
+        /// The first entry is the primary branch: the one an unassigned record falls to, and the
+        /// one existing records are adopted into when a company branches for the first time.
+        /// </summary>
+        public List<BootstrapBranch> Branches { get; set; } = new();
+    }
+
+    /// <summary>
+    /// One branch, and the accounts that run it.
+    ///
+    /// The branch row itself is written to the *tenant* database, because a branch is the
+    /// company's own operational data. Only the accounts are master-side, and only because every
+    /// account is - a user is what selects a tenant, so it has to be readable before any tenant
+    /// database is opened.
+    /// </summary>
+    public class BootstrapBranch
+    {
+        /// <summary>Matches an existing Branch row by code, or creates one.</summary>
+        public string Code { get; set; } = "";
+
+        public string Name { get; set; } = "";
+        public string Address { get; set; } = "";
+        public string Phone { get; set; } = "";
+        public string Email { get; set; } = "";
+
+        /// <summary>
+        /// Staff for this branch. Each gets an AppUser bound to the branch and a matching
+        /// Employee record inside it, so the branch is populated rather than merely declared.
+        /// </summary>
+        public List<BootstrapUser> Users { get; set; } = new();
     }
 
     public class BootstrapUser
@@ -66,5 +101,11 @@ namespace ERP_infrastructure.services
 
         /// <summary>admin, manager or staff.</summary>
         public string Role { get; set; } = "";
+
+        /// <summary>
+        /// Position recorded on the Employee row created alongside a branch account. Purely
+        /// descriptive; what the account may actually do comes from <see cref="Role"/>.
+        /// </summary>
+        public string Position { get; set; } = "";
     }
 }

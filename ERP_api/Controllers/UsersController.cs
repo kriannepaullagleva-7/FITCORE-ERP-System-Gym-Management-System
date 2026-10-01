@@ -19,7 +19,8 @@ namespace ERP_api.Controllers
     [Route("api/users")]
     [Produces("application/json")]
     [Authorize]
-    [RequireModule(ErpModules.UserAccess)]
+    [RequireModule(ErpModules.SystemAdmin)]
+    [RequireSubmodule(ErpModules.Sub.Users)]
     public class UsersController : ControllerBase
     {
         private readonly IUserAccountService _users;

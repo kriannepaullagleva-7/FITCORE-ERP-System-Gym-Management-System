@@ -167,8 +167,35 @@ namespace ERP_Project1
                 "membership" => (Info, InfoSoft),
                 "sales" => (Success, SuccessSoft),
 
-                _ => (Info, InfoSoft)
+                // Stock movement direction. "in"/"out"/"adjustment" match none of the words
+                // above, so without this every movement painted the same neutral pill - the
+                // direction of a stock change should read at a glance, not require the word to
+                // be read.
+                "in" => (Success, SuccessSoft),
+                "out" => (Danger, DangerSoft),
+                "adjustment" or "adjust" => (Warning, WarningSoft),
+                "return" => (Warning, WarningSoft),
+
+                _ => ReferenceColours(value.ToUpperInvariant())
             };
         }
+
+        /// <summary>
+        /// A reference number ("PO-000123", "SALE-45", "RET-000012-CANCEL") has too many
+        /// distinct values for an exact-match table, but the prefix - what kind of document it
+        /// is - is exactly the thing worth telling apart at a glance. Checked by substring
+        /// rather than position, since a few references carry their qualifier as a suffix
+        /// instead (a cancelled return keeps RET as its prefix and CANCEL as its suffix).
+        /// </summary>
+        private static (Color Fore, Color Back) ReferenceColours(string upper) => upper switch
+        {
+            _ when upper.Contains("CANCEL") => (Danger, DangerSoft),
+            _ when upper.StartsWith("PO") => (Info, InfoSoft),
+            _ when upper.StartsWith("SALE") => (Success, SuccessSoft),
+            _ when upper.StartsWith("SUB") => (Info, InfoSoft),
+            _ when upper.StartsWith("RET") => (Warning, WarningSoft),
+            _ when upper.StartsWith("ADJUST") => (Warning, WarningSoft),
+            _ => (Info, InfoSoft)
+        };
     }
 }

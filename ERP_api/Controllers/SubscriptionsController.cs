@@ -61,7 +61,8 @@ namespace ERP_api.Controllers
             [FromBody] CreateSubscriptionDto dto)
         {
             var subscription = await _subscriptionService.CreateSubscriptionAsync(
-                dto.MemberId, dto.PlanId, dto.StartDate ?? DateTime.UtcNow);
+                dto.MemberId, dto.PlanId, dto.StartDate ?? DateTime.UtcNow,
+                dto.WalkInName, dto.WalkInPhone);
 
             return CreatedAtAction(
                 nameof(GetById),

@@ -13,7 +13,7 @@ namespace ERP_infrastructure.services
         /// </summary>
         public static readonly string[] KnownCategories =
         {
-            "Supplements", "Beverages", "Apparel", "Equipment", "Accessories", "Other"
+            "Supplements", "Beverages", "Food", "Apparel", "Equipment", "Accessories", "Other"
         };
 
         private readonly IProductRepository _repository;
@@ -139,6 +139,35 @@ namespace ERP_infrastructure.services
             if (await _repository.IsReferencedBySalesAsync(id))
                 throw new InvalidOperationException(
                     "This product appears on one or more sales and cannot be deleted. Mark it inactive instead.");
+
+            // Stock history must stay intact for a different and sharper reason. Inventory and
+            // StockMovement both cascade from Product, so deleting a product does not fail - it
+            // silently takes the movement ledger with it. That ledger is what explains the
+            // inventory figure on the balance sheet: a received purchase posts an asset, and if
+            // the movements behind it vanish, the asset is still in the books with nothing left
+            // to justify it and no report can reconcile again.
+            //
+            // The foreign keys cannot be relied on to stop this, because they are the thing
+            // doing it. So the guard lives here.
+            if (await _context.StockMovements.AnyAsync(m => m.ProductId == id))
+                throw new InvalidOperationException(
+                    "This product has stock movements on record and cannot be deleted, because " +
+                    "removing it would take the stock history that explains the inventory value " +
+                    "with it. Mark it inactive instead.");
+
+            // Purchases and returns are restricted by their own foreign keys, so the database
+            // would refuse these anyway - but it would do it as a provider error that reaches
+            // the desktop as "server problem". Saying it here makes the refusal a sentence the
+            // operator can act on.
+            if (await _context.PurchaseItems.AnyAsync(i => i.ProductId == id))
+                throw new InvalidOperationException(
+                    "This product appears on one or more purchase orders and cannot be deleted. " +
+                    "Mark it inactive instead.");
+
+            if (await _context.SaleReturnItems.AnyAsync(i => i.ProductId == id))
+                throw new InvalidOperationException(
+                    "This product appears on one or more returns and cannot be deleted. " +
+                    "Mark it inactive instead.");
 
             return await _repository.DeleteAsync(id);
         }

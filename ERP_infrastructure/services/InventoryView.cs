@@ -20,11 +20,30 @@ namespace ERP_infrastructure.services
         // "Out of Stock", "Low Stock" or "In Stock".
         public string StockStatus { get; set; } = string.Empty;
 
-        // Stock is valued at what it cost, falling back to the selling price when no cost has
-        // been entered, so the figure is never silently zero.
-        public decimal StockValue => QuantityOnHand * (CostPrice > 0 ? CostPrice : UnitPrice);
+        /// <summary>
+        /// Weighted average cost of the units on hand. Differs from <see cref="CostPrice"/>,
+        /// which is what the catalogue says one costs today, as soon as two deliveries have
+        /// arrived at different prices.
+        /// </summary>
+        public decimal AverageCost { get; set; }
+
+        /// <summary>What the most recent delivery cost per unit.</summary>
+        public decimal LastUnitCost { get; set; }
+
+        /// <summary>
+        /// What the stock on hand is worth, at weighted average cost.
+        ///
+        /// Set by the service rather than derived here, because a product that has never been
+        /// through a costed receipt has no average and would otherwise be valued at nothing.
+        /// The service falls back to the catalogue cost in that case.
+        /// </summary>
+        public decimal StockValue { get; set; }
 
         public decimal RetailValue => QuantityOnHand * UnitPrice;
+
+        /// <summary>The gross profit still sitting on the shelf.</summary>
+        public decimal PotentialMargin => RetailValue - StockValue;
+
         public DateTime LastUpdatedAt { get; set; }
     }
 
@@ -39,10 +58,19 @@ namespace ERP_infrastructure.services
         public decimal Quantity { get; set; }
         public decimal BalanceBefore { get; set; }
         public decimal BalanceAfter { get; set; }
+
+        /// <summary>What one unit was worth as it moved, and the value of the whole movement.</summary>
+        public decimal UnitCost { get; set; }
+        public decimal TotalCost { get; set; }
+
         public string Reference { get; set; } = string.Empty;
         public string Notes { get; set; } = string.Empty;
+        public int? SupplierId { get; set; }
+        public string SupplierName { get; set; } = "";
         public int? RecordedByEmployeeId { get; set; }
         public string RecordedByName { get; set; } = "- unassigned -";
+        public int? PerformedByUserId { get; set; }
+        public string PerformedBy { get; set; } = "";
         public DateTime MovementDate { get; set; }
     }
 

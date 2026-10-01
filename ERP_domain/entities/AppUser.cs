@@ -46,6 +46,19 @@ namespace ERP_domain.entities
         /// </summary>
         public int? EmployeeId { get; set; }
 
+        /// <summary>
+        /// The branch this account is bound to, or null for somebody who works across the whole
+        /// company. A Manager or Staff account belongs to exactly one branch and can never read
+        /// another; an Admin/Owner has none and chooses which branch to look at.
+        ///
+        /// Like <see cref="EmployeeId"/> this points into the tenant's own database and is
+        /// deliberately not a foreign key - the two rows live in different physical databases.
+        /// It is stored here for the same reason <see cref="CompanyId"/> is: the account is what
+        /// selects the scope, so the scope has to be known before the tenant database is opened.
+        /// Only the identifier is held; the branch's name, address and history stay tenant-side.
+        /// </summary>
+        public int? BranchId { get; set; }
+
         /// <summary>Forces a password change on next sign-in. Set on seeded accounts.</summary>
         public bool MustChangePassword { get; set; }
 

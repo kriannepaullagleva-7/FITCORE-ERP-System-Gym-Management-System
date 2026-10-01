@@ -13,6 +13,8 @@ namespace ERP_infrastructure.services
         private readonly IPaymentRepository _paymentRepo;
         private readonly TenantErpDbContext _context;
         private readonly ICurrentUserAccessor _actor;
+        private readonly IAuditService _audit;
+        private readonly IFinancePostingService _finance;
 
         public SaleService(
             ISaleRepository saleRepo,
@@ -20,7 +22,9 @@ namespace ERP_infrastructure.services
             IProductRepository productRepo,
             IPaymentRepository paymentRepo,
             TenantErpDbContext context,
-            ICurrentUserAccessor actor)
+            ICurrentUserAccessor actor,
+            IAuditService audit,
+            IFinancePostingService finance)
         {
             _saleRepo = saleRepo;
             _memberRepo = memberRepo;
@@ -28,6 +32,8 @@ namespace ERP_infrastructure.services
             _paymentRepo = paymentRepo;
             _context = context;
             _actor = actor;
+            _audit = audit;
+            _finance = finance;
         }
 
         /// <summary>
@@ -64,9 +70,9 @@ namespace ERP_infrastructure.services
             {
                 SaleId = sale.SaleId,
                 MemberId = sale.MemberId,
-                MemberName = sale.Member == null
-                    ? $"Member #{sale.MemberId}"
-                    : $"{sale.Member.FirstName} {sale.Member.LastName}".Trim(),
+                MemberName = sale.Member is not null
+                    ? $"{sale.Member.FirstName} {sale.Member.LastName}".Trim()
+                    : string.IsNullOrWhiteSpace(sale.WalkInName) ? "Walk-In" : sale.WalkInName,
                 SaleDate = sale.SaleDate,
                 ItemCount = sale.Items.Count,
                 TotalQuantity = sale.Items.Sum(i => i.Quantity),
@@ -75,13 +81,22 @@ namespace ERP_infrastructure.services
                 TotalAmount = sale.TotalAmount,
                 Status = sale.Status,
                 CashierEmployeeId = sale.CashierEmployeeId,
+
+                // Blank rather than a placeholder word, so a caller with a fallback - the
+                // receipt builder falls back to ProcessedBy - can tell "nothing to show" from
+                // "here is the actual word 'unassigned'". A non-blank sentinel here is exactly
+                // what let the receipt print the literal placeholder text verbatim.
                 CashierName = sale.CashierEmployee == null
-                    ? "- unassigned -"
+                    ? ""
                     : $"{sale.CashierEmployee.FirstName} {sale.CashierEmployee.LastName}".Trim(),
+                ProcessedByUserId = sale.ProcessedByUserId,
+                ProcessedBy = string.IsNullOrWhiteSpace(sale.ProcessedBy) ? "—" : sale.ProcessedBy,
                 Notes = sale.Notes,
                 AmountPaid = amountPaid,
                 Balance = balance < 0 ? 0m : balance,
-                PaymentStatus = ResolvePaymentStatus(sale.Status, sale.TotalAmount, amountPaid)
+                PaymentStatus = ResolvePaymentStatus(sale.Status, sale.TotalAmount, amountPaid),
+                AmountTendered = sale.AmountTendered,
+                ChangeGiven = sale.ChangeGiven
             };
         }
 
@@ -170,13 +185,15 @@ namespace ERP_infrastructure.services
         }
 
         public async Task<Sale> CreateSaleAsync(
-            int memberId,
+            int? memberId,
             List<SaleLineRequest> items,
             decimal discount = 0m,
             int? cashierEmployeeId = null,
             string notes = "",
             bool settleNow = false,
-            string paymentMethod = "Cash")
+            string paymentMethod = "Cash",
+            string? walkInName = null,
+            decimal? amountTendered = null)
         {
             if (items == null || items.Count == 0)
                 throw new InvalidOperationException("A sale needs at least one item.");
@@ -184,8 +201,18 @@ namespace ERP_infrastructure.services
             if (discount < 0)
                 throw new InvalidOperationException("Discount cannot be negative.");
 
-            var member = await _memberRepo.GetByIdAsync(memberId);
-            if (member == null) throw new InvalidOperationException("Member not found.");
+            // Exactly one of a real member or a walk-in name is looked up. A sale is not
+            // required to name either at all - it is then simply "Walk-In".
+            Member? member = null;
+            if (memberId.HasValue)
+            {
+                member = await _memberRepo.GetByIdAsync(memberId.Value);
+                if (member == null) throw new InvalidOperationException("Member not found.");
+            }
+
+            var resolvedWalkInName = member is null
+                ? (string.IsNullOrWhiteSpace(walkInName) ? "Walk-In" : walkInName.Trim())
+                : null;
 
             if (cashierEmployeeId.HasValue &&
                 !await _context.Employees.AnyAsync(e => e.EmployeeId == cashierEmployeeId.Value))
@@ -226,6 +253,7 @@ namespace ERP_infrastructure.services
                 var sale = new Sale
                 {
                     MemberId = memberId,
+                    WalkInName = resolvedWalkInName,
                     SaleDate = DateTime.UtcNow,
                     CreatedAt = DateTime.UtcNow,
                     Status = "Completed",
@@ -242,6 +270,17 @@ namespace ERP_infrastructure.services
 
                 decimal subtotal = 0m;
 
+                // The cost of the stock being sold, read once for every line up front. It has
+                // to be captured now rather than looked up later: the weighted average moves
+                // with the next delivery, and a sale rung up today must keep charging today's
+                // cost to cost of goods sold however much stock arrives afterwards.
+                var productIds = merged.Select(l => l.ProductId).ToList();
+
+                var costs = await _context.Inventories
+                    .AsNoTracking()
+                    .Where(i => productIds.Contains(i.ProductId))
+                    .ToDictionaryAsync(i => i.ProductId, i => i.AverageCost);
+
                 foreach (var line in merged)
                 {
                     var product = await _productRepo.GetByIdAsync(line.ProductId);
@@ -252,13 +291,21 @@ namespace ERP_infrastructure.services
                         throw new InvalidOperationException(
                             $"{product.ProductName} is inactive and cannot be sold.");
 
-                    // The price is whatever the catalogue says right now; the browser does not
+                    // Weighted average where stock has actually been received at a cost;
+                    // otherwise the catalogue's cost price, which is the best estimate
+                    // available for a product that has never been through a purchase.
+                    var unitCost = costs.TryGetValue(line.ProductId, out var average) && average > 0m
+                        ? average
+                        : product.CostPrice;
+
+                    // The price is whatever the catalogue says right now; the client does not
                     // get to name it. It is then frozen onto the line for the receipt.
                     sale.Items.Add(new SaleItem
                     {
                         ProductId = line.ProductId,
                         Quantity = line.Quantity,
-                        UnitPrice = product.UnitPrice
+                        UnitPrice = product.UnitPrice,
+                        UnitCost = unitCost
                     });
 
                     subtotal += line.Quantity * product.UnitPrice;
@@ -271,6 +318,24 @@ namespace ERP_infrastructure.services
                 sale.Subtotal = subtotal;
                 sale.Discount = discount;
                 sale.TotalAmount = subtotal - discount;
+
+                var normalisedMethod = NormalisePaymentMethod(paymentMethod);
+                decimal? changeGiven = null;
+
+                // Change is always computed here, never accepted from the caller - the same
+                // trust boundary payroll's net pay already uses for a figure that must always
+                // follow arithmetically from the others.
+                if (settleNow && string.Equals(normalisedMethod, "Cash", StringComparison.OrdinalIgnoreCase)
+                    && amountTendered.HasValue)
+                {
+                    if (amountTendered.Value < sale.TotalAmount)
+                        throw new InvalidOperationException(
+                            $"Amount tendered of {amountTendered.Value:N2} is less than the total due of {sale.TotalAmount:N2}.");
+
+                    changeGiven = amountTendered.Value - sale.TotalAmount;
+                    sale.AmountTendered = amountTendered.Value;
+                    sale.ChangeGiven = changeGiven;
+                }
 
                 _context.Sales.Add(sale);
                 await _context.SaveChangesAsync();
@@ -288,22 +353,51 @@ namespace ERP_infrastructure.services
                     _context.Payments.Add(new Payment
                     {
                         MemberId = memberId,
+                        WalkInName = resolvedWalkInName,
                         SaleId = sale.SaleId,
                         Category = PaymentCategories.Sales,
                         Amount = sale.TotalAmount,
                         PaymentDate = sale.SaleDate,
-                        Method = NormalisePaymentMethod(paymentMethod),
+                        Method = normalisedMethod,
                         Status = "Completed",
                         ReferenceNo = $"SALE-{sale.SaleId}",
                         Notes = "Taken at the till with the sale.",
                         ProcessedByUserId = actor.AppUserId,
                         ProcessedBy = actor.DisplayName,
+                        AmountTendered = sale.AmountTendered,
+                        ChangeGiven = changeGiven,
                         CreatedAt = DateTime.UtcNow
                     });
                 }
 
                 await _context.SaveChangesAsync();
                 await transaction.CommitAsync();
+
+                var partyName = member is not null
+                    ? $"{member.FirstName} {member.LastName}"
+                    : resolvedWalkInName ?? "Walk-In";
+
+                await _audit.RecordAsync(
+                    AuditActions.SaleCompleted, ErpModules.Sales, nameof(Sale), sale.SaleId.ToString(),
+                    $"Sale #{sale.SaleId} for {partyName}, " +
+                    $"{sale.Items.Count} line(s), total {sale.TotalAmount:N2}.");
+
+                // Posted after the transaction has committed, not inside it. A sale that
+                // reached the database is a sale; the books follow from it and must never be
+                // in a position to roll it back. Anything that fails here is reported on the
+                // Finance screen and can be posted again from there.
+                await _finance.PostSaleAsync(sale.SaleId);
+
+                if (settleNow && sale.TotalAmount > 0m)
+                {
+                    var settlement = await _context.Payments
+                        .AsNoTracking()
+                        .Where(p => p.SaleId == sale.SaleId)
+                        .Select(p => p.PaymentId)
+                        .FirstOrDefaultAsync();
+
+                    if (settlement > 0) await _finance.PostPaymentAsync(settlement);
+                }
 
                 return sale;
             }
@@ -354,6 +448,21 @@ namespace ERP_infrastructure.services
                 await _context.SaveChangesAsync();
                 await transaction.CommitAsync();
 
+                await _audit.RecordAsync(
+                    AuditActions.SaleCancelled, ErpModules.Sales, nameof(Sale), sale.SaleId.ToString(),
+                    $"Sale #{sale.SaleId} cancelled, stock returned.");
+
+                // The ledger is corrected by reversal rather than by deletion, so the cancelled
+                // sale and its undoing both stay on record. Its payments are refunded above, so
+                // their postings come back too.
+                await _finance.ReverseSaleAsync(sale.SaleId, $"Sale #{sale.SaleId} cancelled");
+
+                foreach (var payment in payments)
+                {
+                    await _finance.ReversePaymentAsync(
+                        payment.PaymentId, $"Sale #{sale.SaleId} cancelled");
+                }
+
                 return ToView(sale, 0m);
             }
             catch
@@ -389,6 +498,8 @@ namespace ERP_infrastructure.services
                 _context.Sales.Remove(sale);
                 await _context.SaveChangesAsync();
                 await transaction.CommitAsync();
+
+                await _finance.ReverseSaleAsync(id, $"Sale #{id} deleted");
 
                 return true;
             }
@@ -428,6 +539,10 @@ namespace ERP_infrastructure.services
             inventory.QuantityOnHand -= quantity;
             inventory.LastUpdatedAt = DateTime.UtcNow;
 
+            var actor = _actor.Current;
+
+            // Issuing stock does not change what the remainder cost, so the average is left
+            // alone and only the value leaving is recorded.
             _context.StockMovements.Add(new StockMovement
             {
                 ProductId = productId,
@@ -435,8 +550,13 @@ namespace ERP_infrastructure.services
                 Quantity = quantity,
                 BalanceBefore = before,
                 BalanceAfter = inventory.QuantityOnHand,
+                UnitCost = inventory.AverageCost,
+                TotalCost = Math.Round(quantity * inventory.AverageCost, 2, MidpointRounding.AwayFromZero),
                 Reference = $"SALE-{saleId}",
                 Notes = "Stock issued for sale",
+                RecordedByEmployeeId = actor.EmployeeId,
+                PerformedByUserId = actor.AppUserId,
+                PerformedBy = actor.DisplayName,
                 MovementDate = DateTime.UtcNow,
                 CreatedAt = DateTime.UtcNow
             });
@@ -453,6 +573,11 @@ namespace ERP_infrastructure.services
             inventory.QuantityOnHand += quantity;
             inventory.LastUpdatedAt = DateTime.UtcNow;
 
+            var actor = _actor.Current;
+
+            // Stock coming back from a cancelled sale returns at the average it left at, so the
+            // weighted average is undisturbed - the goods never stopped being worth what they
+            // were worth.
             _context.StockMovements.Add(new StockMovement
             {
                 ProductId = productId,
@@ -460,10 +585,15 @@ namespace ERP_infrastructure.services
                 Quantity = quantity,
                 BalanceBefore = before,
                 BalanceAfter = inventory.QuantityOnHand,
+                UnitCost = inventory.AverageCost,
+                TotalCost = Math.Round(quantity * inventory.AverageCost, 2, MidpointRounding.AwayFromZero),
                 Reference = $"{prefix}-{saleId}",
                 Notes = prefix == "CANCEL"
                     ? "Stock returned after the sale was cancelled"
                     : "Stock returned after the sale was deleted",
+                RecordedByEmployeeId = actor.EmployeeId,
+                PerformedByUserId = actor.AppUserId,
+                PerformedBy = actor.DisplayName,
                 MovementDate = DateTime.UtcNow,
                 CreatedAt = DateTime.UtcNow
             });

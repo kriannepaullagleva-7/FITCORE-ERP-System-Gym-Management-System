@@ -104,7 +104,12 @@ namespace ERP_Project1
                     BackColor = UiTheme.Canvas,
                     Cursor = Cursors.Hand,
                     Margin = new Padding(0, 0, 4, 0),
-                    TabStop = true
+                    TabStop = true,
+
+                    // A tab is a caption, not a menu command: without this "Subscriptions &
+                    // Tiers" loses its ampersand to the accelerator prefix and renders as
+                    // "Subscriptions  Tiers" with a stray underline under the T.
+                    UseMnemonic = false
                 };
                 button.FlatAppearance.BorderSize = 0;
                 button.FlatAppearance.MouseOverBackColor = UiTheme.PrimarySoft;

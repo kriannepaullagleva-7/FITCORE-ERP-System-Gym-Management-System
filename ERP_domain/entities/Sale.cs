@@ -3,10 +3,18 @@ using System.Collections.Generic;
 
 namespace ERP_domain.entities
 {
-    public class Sale : IAuditable
+    public class Sale : IAuditable, IBranchScoped
     {
         public int SaleId { get; set; }
-        public int MemberId { get; set; }
+
+        /// <summary>The branch whose till rang this sale. Null on a single-site tenant.</summary>
+        public int? BranchId { get; set; }
+
+        /// <summary>
+        /// Null for a walk-in sale - a normal sale is not required to name a member or a
+        /// customer at all. See <see cref="WalkInName"/>.
+        /// </summary>
+        public int? MemberId { get; set; }
         public DateTime SaleDate { get; set; } = DateTime.UtcNow;
 
         // Sum of the line subtotals, before any discount. Stored rather than recomputed so a
@@ -44,8 +52,23 @@ namespace ERP_domain.entities
         /// <summary>Stamped by the DbContext whenever this record is changed.</summary>
         public DateTime? UpdatedAt { get; set; }
 
+        /// <summary>
+        /// A typed name for the till slip when there is no member - defaults to "Walk-In" when
+        /// left blank. Used only when <see cref="MemberId"/> is null.
+        /// </summary>
+        public string? WalkInName { get; set; }
+
+        /// <summary>Cash handed over by the customer. Set only when the sale was paid in cash.</summary>
+        public decimal? AmountTendered { get; set; }
+
+        /// <summary>
+        /// <see cref="AmountTendered"/> minus <see cref="TotalAmount"/>, computed server-side.
+        /// Null whenever <see cref="AmountTendered"/> is null.
+        /// </summary>
+        public decimal? ChangeGiven { get; set; }
+
         // Foreign keys
-        public Member Member { get; set; } = null!;
+        public Member? Member { get; set; }
         public Employee? CashierEmployee { get; set; }
 
         // Navigation properties

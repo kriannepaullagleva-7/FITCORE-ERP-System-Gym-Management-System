@@ -10,11 +10,15 @@ namespace ERP_infrastructure.services
 
         private readonly IMemberRepository _repository;
         private readonly IPaymentRepository _paymentRepository;
+        private readonly ISubscriptionRepository _subscriptionRepository;
 
-        public MemberService(IMemberRepository repository, IPaymentRepository paymentRepository)
+        public MemberService(
+            IMemberRepository repository, IPaymentRepository paymentRepository,
+            ISubscriptionRepository subscriptionRepository)
         {
             _repository = repository;
             _paymentRepository = paymentRepository;
+            _subscriptionRepository = subscriptionRepository;
         }
 
         public async Task<Member?> GetMemberByIdAsync(int id)
@@ -128,8 +132,58 @@ namespace ERP_infrastructure.services
             return await _repository.UpdateAsync(member);
         }
 
+        /// <summary>
+        /// Pauses a membership rather than ending it.
+        ///
+        /// Suspension and archiving both take somebody off the active roll, and they are not
+        /// the same thing: an archived member has left, a suspended one is coming back. Keeping
+        /// them apart is what lets the gym tell "we lost forty members this year" from "forty
+        /// members are injured", which are very different pieces of news.
+        /// </summary>
+        public async Task<Member?> SuspendMemberAsync(int id, string reason, DateTime? until)
+        {
+            var member = await _repository.GetByIdAsync(id);
+            if (member == null) return null;
+
+            if (string.Equals(member.Status, ArchivedStatus, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new ValidationException(
+                    "This member has been archived. Restore them first if they are coming back.");
+            }
+
+            if (string.IsNullOrWhiteSpace(reason))
+            {
+                throw new ValidationException(
+                    "Say why the membership is being suspended, so the front desk can explain it.");
+            }
+
+            if (until.HasValue && until.Value.Date < DateTime.UtcNow.Date)
+            {
+                throw new ValidationException("A suspension cannot end in the past.");
+            }
+
+            member.Status = SuspendedStatus;
+            member.SuspensionReason = reason.Trim();
+            member.SuspendedUntil = until;
+
+            return await _repository.UpdateAsync(member);
+        }
+
+        public async Task<Member?> ReactivateMemberAsync(int id)
+        {
+            var member = await _repository.GetByIdAsync(id);
+            if (member == null) return null;
+
+            member.Status = ActiveStatus;
+            member.SuspensionReason = string.Empty;
+            member.SuspendedUntil = null;
+
+            return await _repository.UpdateAsync(member);
+        }
+
         private const string ArchivedStatus = "Archived";
         private const string ActiveStatus = "Active";
+        private const string SuspendedStatus = "Suspended";
 
         public async Task<MemberHistoryCounts> GetMemberHistoryCountsAsync(int id)
         {
@@ -151,8 +205,11 @@ namespace ERP_infrastructure.services
             return await _repository.SearchAsync(term);
         }
 
-        // Builds the Membership grid: every member alongside the subscription that
-        // currently governs their access, plus what they still owe on it.
+        // Builds the Membership grid: every member alongside the subscription that currently
+        // governs their access, plus what they still owe on it - and every walk-in membership
+        // besides, since a walk-in's subscription is a real membership sold with no Member row
+        // to hang it off. Leaving those out would make the one screen that lists "every
+        // membership sold" quietly skip the ones sold to walk-ins.
         public async Task<List<MembershipView>> GetMembershipOverviewAsync()
         {
             var members = await _repository.GetMembersWithSubscriptionsAsync();
@@ -172,12 +229,14 @@ namespace ERP_infrastructure.services
                     ?? member.Subscriptions.OrderByDescending(s => s.EndDate).FirstOrDefault();
             }
 
-            var paidTotals = await _paymentRepository.GetPaidTotalsBySubscriptionAsync(
-                currentByMember.Values
-                    .Where(s => s != null)
-                    .Select(s => s!.SubscriptionId));
+            var allSubscriptions = await _subscriptionRepository.GetAllWithDetailsAsync();
+            var walkIns = allSubscriptions.Where(s => s.MemberId is null).ToList();
 
-            var views = new List<MembershipView>(members.Count);
+            var paidTotals = await _paymentRepository.GetPaidTotalsBySubscriptionAsync(
+                currentByMember.Values.Where(s => s != null).Select(s => s!.SubscriptionId)
+                    .Concat(walkIns.Select(s => s.SubscriptionId)));
+
+            var views = new List<MembershipView>(members.Count + walkIns.Count);
 
             foreach (var member in members)
             {
@@ -192,52 +251,75 @@ namespace ERP_infrastructure.services
                     JoinDate = member.JoinDate
                 };
 
-                var current = currentByMember[member.MemberId];
+                ApplySubscription(view, currentByMember[member.MemberId], paidTotals, today);
+                views.Add(view);
+            }
 
-                if (current == null)
+            foreach (var walkIn in walkIns)
+            {
+                var view = new MembershipView
                 {
-                    view.MembershipStatus = "No Plan";
-                    view.PaymentStatus = "N/A";
-                    views.Add(view);
-                    continue;
-                }
+                    MemberId = null,
+                    FirstName = string.IsNullOrWhiteSpace(walkIn.WalkInName) ? "Walk-In" : walkIn.WalkInName,
+                    LastName = "",
+                    Phone = walkIn.WalkInPhone ?? "",
+                    MemberStatus = "Walk-In",
+                    JoinDate = walkIn.StartDate
+                };
 
-                view.SubscriptionId = current.SubscriptionId;
-                view.PlanId = current.PlanId;
-                view.PlanName = current.Plan?.PlanName ?? $"Plan #{current.PlanId}";
-                view.PlanPrice = current.Plan?.Price ?? 0m;
-                view.StartDate = current.StartDate;
-                view.ExpiryDate = current.EndDate;
-
-                var daysRemaining = (int)Math.Ceiling((current.EndDate.Date - today).TotalDays);
-                view.DaysRemaining = daysRemaining;
-
-                if (current.Status == "Cancelled")
-                    view.MembershipStatus = "Cancelled";
-                else if (daysRemaining < 0)
-                    view.MembershipStatus = "Expired";
-                else if (daysRemaining <= ExpiringSoonDays)
-                    view.MembershipStatus = "Expiring Soon";
-                else
-                    view.MembershipStatus = "Active";
-
-                var paid = paidTotals.TryGetValue(current.SubscriptionId, out var total) ? total : 0m;
-                view.AmountPaid = paid;
-                view.Balance = Math.Max(0m, view.PlanPrice - paid);
-
-                if (view.PlanPrice <= 0m)
-                    view.PaymentStatus = "N/A";
-                else if (paid <= 0m)
-                    view.PaymentStatus = "Unpaid";
-                else if (view.Balance > 0m)
-                    view.PaymentStatus = "Partial";
-                else
-                    view.PaymentStatus = "Paid";
-
+                ApplySubscription(view, walkIn, paidTotals, today);
                 views.Add(view);
             }
 
             return views;
+        }
+
+        /// <summary>
+        /// The membership/payment status derivation shared by a member's current subscription
+        /// and a walk-in's - the same rules regardless of whether a Member record is behind it.
+        /// </summary>
+        private static void ApplySubscription(
+            MembershipView view, Subscription? current,
+            IReadOnlyDictionary<int, decimal> paidTotals, DateTime today)
+        {
+            if (current == null)
+            {
+                view.MembershipStatus = "No Plan";
+                view.PaymentStatus = "N/A";
+                return;
+            }
+
+            view.SubscriptionId = current.SubscriptionId;
+            view.PlanId = current.PlanId;
+            view.PlanName = current.Plan?.PlanName ?? $"Plan #{current.PlanId}";
+            view.PlanPrice = current.Plan?.Price ?? 0m;
+            view.StartDate = current.StartDate;
+            view.ExpiryDate = current.EndDate;
+
+            var daysRemaining = (int)Math.Ceiling((current.EndDate.Date - today).TotalDays);
+            view.DaysRemaining = daysRemaining;
+
+            if (current.Status == "Cancelled")
+                view.MembershipStatus = "Cancelled";
+            else if (daysRemaining < 0)
+                view.MembershipStatus = "Expired";
+            else if (daysRemaining <= ExpiringSoonDays)
+                view.MembershipStatus = "Expiring Soon";
+            else
+                view.MembershipStatus = "Active";
+
+            var paid = paidTotals.TryGetValue(current.SubscriptionId, out var total) ? total : 0m;
+            view.AmountPaid = paid;
+            view.Balance = Math.Max(0m, view.PlanPrice - paid);
+
+            if (view.PlanPrice <= 0m)
+                view.PaymentStatus = "N/A";
+            else if (paid <= 0m)
+                view.PaymentStatus = "Unpaid";
+            else if (view.Balance > 0m)
+                view.PaymentStatus = "Partial";
+            else
+                view.PaymentStatus = "Paid";
         }
     }
 }

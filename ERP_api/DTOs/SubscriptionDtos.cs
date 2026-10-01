@@ -4,8 +4,18 @@ namespace ERP_api.DTOs
 {
     public class CreateSubscriptionDto
     {
-        [Range(1, int.MaxValue, ErrorMessage = "A valid member must be selected.")]
-        public int MemberId { get; set; }
+        /// <summary>
+        /// Null for a walk-in membership - one sold to somebody with no Member record. See
+        /// <see cref="WalkInName"/>.
+        /// </summary>
+        public int? MemberId { get; set; }
+
+        /// <summary>The walk-in's name, used only when <see cref="MemberId"/> is null.</summary>
+        [StringLength(150)]
+        public string? WalkInName { get; set; }
+
+        [StringLength(20)]
+        public string? WalkInPhone { get; set; }
 
         [Range(1, int.MaxValue, ErrorMessage = "A valid plan must be selected.")]
         public int PlanId { get; set; }
@@ -27,7 +37,9 @@ namespace ERP_api.DTOs
     public class SubscriptionDto
     {
         public int SubscriptionId { get; set; }
-        public int MemberId { get; set; }
+        public int? MemberId { get; set; }
+        public string? WalkInName { get; set; }
+        public string? WalkInPhone { get; set; }
         public int PlanId { get; set; }
         public DateTime StartDate { get; set; }
         public DateTime EndDate { get; set; }

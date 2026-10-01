@@ -7,9 +7,14 @@ namespace ERP_infrastructure.services
     public class PaymentView
     {
         public int PaymentId { get; set; }
-        public int MemberId { get; set; }
 
-        /// <summary>The member's real name, always populated. Used on receipts and detail views.</summary>
+        /// <summary>Null for a walk-in payment. See <see cref="MemberName"/>.</summary>
+        public int? MemberId { get; set; }
+
+        /// <summary>
+        /// The member's real name, or the walk-in's typed name, or "Walk-In" if neither. Always
+        /// populated. Used on receipts and detail views.
+        /// </summary>
         public string MemberName { get; set; } = string.Empty;
 
         /// <summary>
@@ -43,6 +48,12 @@ namespace ERP_infrastructure.services
         /// <summary>The signed-in user who took the money.</summary>
         public int? ProcessedByUserId { get; set; }
         public string ProcessedBy { get; set; } = string.Empty;
+
+        /// <summary>Cash handed over, when this payment was taken in cash.</summary>
+        public decimal? AmountTendered { get; set; }
+
+        /// <summary><see cref="AmountTendered"/> minus <see cref="Amount"/>.</summary>
+        public decimal? ChangeGiven { get; set; }
     }
 
     public class PaymentMethodTotal

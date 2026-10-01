@@ -471,10 +471,22 @@ namespace ERP_infrastructure.services
                 RoleDisplayName = user.Role.DisplayName,
                 IsActive = user.IsActive,
                 EnterpriseTierName = tier.ToString(),
+                RoleLevel = user.Role.HierarchyLevel,
                 Modules = PermissionResolver.Describe(
                     tier,
                     user.Role.Permissions.Select(p => p.Module),
-                    user.Permissions)
+                    user.Permissions),
+
+                // The whole subfeature catalogue with the reason each one is or is not
+                // available, so an administrator can see the shape of the plan rather than
+                // nine checkboxes that do not explain why a screen is missing.
+                Submodules = PermissionResolver.DescribeSubmodules(
+                    tier,
+                    user.Role.HierarchyLevel,
+                    PermissionResolver.Resolve(
+                        tier,
+                        user.Role.Permissions.Select(p => p.Module),
+                        user.Permissions))
             };
         }
     }

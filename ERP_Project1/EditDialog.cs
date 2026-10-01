@@ -1,10 +1,11 @@
 using System.Drawing;
 using System.Globalization;
+using System.Linq;
 using System.Text.RegularExpressions;
 
 namespace ERP_Project1
 {
-    internal enum FieldKind { Text, Multiline, Number, Money, Integer, Date, Combo, Check, Password, Email }
+    internal enum FieldKind { Text, Multiline, Number, Money, Integer, Date, Combo, Check, Password, Email, Phone }
 
     /// <summary>One editable field in an <see cref="EditDialog"/>.</summary>
     internal sealed class FieldSpec
@@ -31,6 +32,13 @@ namespace ERP_Project1
         /// <summary>Longest accepted text, mirroring the column width the API validates.</summary>
         public int? MaxLength { get; set; }
 
+        /// <summary>
+        /// Shown but not editable. Used where the server would refuse the change anyway - a
+        /// salary field for a Manager, say - so the dialog shows what the value is without
+        /// inviting an edit the API is only going to reject.
+        /// </summary>
+        public bool ReadOnly { get; set; }
+
         /// <summary>A field-specific rule. Returns null when the value is acceptable.</summary>
         public Func<FieldSpec, string?>? Validate { get; set; }
 
@@ -41,6 +49,9 @@ namespace ERP_Project1
         public Action<FieldSpec>? OnChanged { get; set; }
 
         internal Control? Control { get; set; }
+
+        /// <summary>The small red line under the field, shown when this field fails validation.</summary>
+        internal Label? ErrorLabel { get; set; }
 
         public string Text => Kind switch
         {
@@ -89,12 +100,16 @@ namespace ERP_Project1
         private static readonly Regex EmailPattern =
             new(@"^[^@\s]+@[^@\s.]+(\.[^@\s.]+)+$", RegexOptions.Compiled);
 
+        /// <summary>WinForms' own default, used where a field declares no limit of its own.</summary>
+        private const int DefaultMaxLength = 32767;
+
         private readonly IList<FieldSpec> _fields;
         private readonly Func<IList<FieldSpec>, Task<string?>> _save;
         private readonly Panel _errorPanel;
         private readonly Label _error;
         private readonly Button _saveButton;
         private readonly string _saveText;
+        private readonly Dictionary<FieldSpec, string> _originalValues;
         private bool _saving;
 
         private EditDialog(string title, string subtitle, IList<FieldSpec> fields,
@@ -189,20 +204,63 @@ namespace ERP_Project1
                 var control = BuildControl(field, fieldWidth);
                 field.Control = control;
 
+                if (field.ReadOnly)
+                {
+                    // A ComboBox and CheckBox have no read-only mode of their own, so Enabled
+                    // is used for those; a TextBox gets ReadOnly, which - unlike Enabled -
+                    // still paints as ordinary text rather than the greyed-out disabled look.
+                    switch (control)
+                    {
+                        case TextBox textBox: textBox.ReadOnly = true; break;
+                        default: control.Enabled = false; break;
+                    }
+                }
+
                 if (field.Kind == FieldKind.Password)
                 {
                     layout.Controls.Add(BuildPasswordRow((TextBox)control, fieldWidth));
+                }
+                else if (field.Kind == FieldKind.Money)
+                {
+                    layout.Controls.Add(BuildMoneyRow((TextBox)control));
                 }
                 else
                 {
                     layout.Controls.Add(control);
                 }
 
-                if (field.Kind == FieldKind.Combo && field.OnChanged is not null &&
-                    control is ComboBox combo)
+                if (field.OnChanged is not null)
                 {
-                    combo.SelectedIndexChanged += (_, _) => field.OnChanged(field);
+                    // Combo fields react to a selection; text-entry fields (Money included)
+                    // react to every keystroke, which is what lets a change-due figure update
+                    // as the operator types the amount tendered rather than after they leave
+                    // the field.
+                    if (control is ComboBox combo)
+                    {
+                        combo.SelectedIndexChanged += (_, _) => field.OnChanged(field);
+                    }
+                    else if (control is TextBox textBox)
+                    {
+                        textBox.TextChanged += (_, _) => field.OnChanged(field);
+                    }
                 }
+
+                // Hidden until Save finds this field invalid - see ShowFieldProblems. Always
+                // present (rather than created on demand) so it already occupies its row and
+                // showing it does not reshuffle every field below it by more than its own height.
+                var errorLabel = new Label
+                {
+                    Text = "",
+                    Font = UiTheme.Small,
+                    ForeColor = UiTheme.Danger,
+                    AutoSize = true,
+                    MaximumSize = new Size(fieldWidth, 0),
+                    Margin = new Padding(2, 3, 0, 0),
+                    Visible = false,
+                    UseMnemonic = false
+                };
+                field.ErrorLabel = errorLabel;
+                layout.Controls.Add(errorLabel);
 
                 if (!string.IsNullOrWhiteSpace(field.Hint))
                 {
@@ -217,15 +275,21 @@ namespace ERP_Project1
                         UseMnemonic = false
                     });
                 }
-                else
-                {
-                    var last = layout.Controls[layout.Controls.Count - 1];
-                    last.Margin = new Padding(last.Margin.Left, last.Margin.Top,
-                                              last.Margin.Right, 12);
-                }
+
+                // Whatever landed last for this field - the hint if there was one, the error
+                // label otherwise - carries the gap before the next field's label.
+                var lastForField = layout.Controls[layout.Controls.Count - 1];
+                lastForField.Margin = new Padding(lastForField.Margin.Left, lastForField.Margin.Top,
+                                                  lastForField.Margin.Right, 12);
             }
 
             scroll.Controls.Add(layout);
+
+            // Snapshotted once every control has its starting value, so Cancel and the window's
+            // own close button can tell "nothing changed" from "there is typing to lose" without
+            // any field kind needing to say so itself - FieldSpec.Text already normalises every
+            // kind (combo, check, date, plain text) to one comparable string.
+            _originalValues = fields.ToDictionary(f => f, f => f.Text);
 
             // ---- footer, always visible even when the field list scrolls ----
             var footer = new Panel
@@ -240,7 +304,13 @@ namespace ERP_Project1
                 e.Graphics.DrawLine(pen, 0, 0, footer.Width, 0);
             };
 
-            _saveButton = UiKit.Action(saveText, ButtonTone.Primary, async (_, _) => await SaveAsync(), 160);
+            // Sized to its label: several flows use a sentence rather than "Save", and a
+            // fixed width silently clipped them to "Create and take".
+            var saveWidth = Math.Max(160,
+                TextRenderer.MeasureText(saveText, UiTheme.BodyStrong).Width + 36);
+
+            _saveButton = UiKit.Action(saveText, ButtonTone.Primary,
+                async (_, _) => await SaveAsync(), saveWidth);
             var cancel = UiKit.Action("Cancel", ButtonTone.Secondary,
                 (_, _) => { DialogResult = DialogResult.Cancel; Close(); }, 104);
 
@@ -260,6 +330,20 @@ namespace ERP_Project1
 
             AcceptButton = _saveButton;
             CancelButton = cancel;
+            FormClosing += HandleClosing;
+
+            // Focuses the first field an operator can actually type into, rather than leaving
+            // the initial focus to whatever WinForms picks - normally the title bar's own
+            // system controls, which is nowhere useful to start typing.
+            Shown += (_, _) =>
+            {
+                foreach (var f in fields)
+                {
+                    if (f.ReadOnly || f.Control is not { Enabled: true }) continue;
+                    f.Control.Focus();
+                    break;
+                }
+            };
 
             // Size to the content, but never taller than the screen.
             var wanted = layout.PreferredSize.Height + footer.Height + 48;
@@ -269,17 +353,84 @@ namespace ERP_Project1
             Height = Math.Min(wanted, maximum);
         }
 
+        // ------------------------------------------------------------------ closing
+
+        private bool IsDirty() => _fields.Any(f => f.Text != _originalValues[f]);
+
+        /// <summary>
+        /// Catches every way this dialog can close - the Cancel button, Escape (routed through
+        /// it as <see cref="CancelButton"/>), and the window's own X - in one place, so "was
+        /// anything actually typed" only has to be answered once. A successful Save already set
+        /// <see cref="DialogResult.OK"/> before calling <see cref="Close"/>, so that path is
+        /// let through without asking; a save still in flight refuses to close at all, so an
+        /// impatient click cannot abandon the operation the server is midway through.
+        /// </summary>
+        private void HandleClosing(object? sender, FormClosingEventArgs e)
+        {
+            if (_saving)
+            {
+                e.Cancel = true;
+                return;
+            }
+
+            if (DialogResult == DialogResult.OK || !IsDirty()) return;
+
+            // Owned by this dialog rather than raised through UiKit.Confirm, so the prompt
+            // centres on the form it is guarding instead of on the screen.
+            if (ConfirmDialog.Show(this, "Discard unsaved changes?",
+                    "Any changes you made will be lost.", "Discard changes", "Stay",
+                    ButtonTone.Danger) != DialogResult.Yes)
+            {
+                e.Cancel = true;
+            }
+        }
+
         // ------------------------------------------------------------------ building
 
-        private static Label BuildLabel(FieldSpec f) => new()
+        /// <summary>
+        /// A required field's label is followed by a "*" - always was - but painted in the same
+        /// danger red used everywhere else in the app to mean "this needs attention", rather than
+        /// the label's own colour, so "required" reads at a glance rather than only by noticing
+        /// the character. Two labels rather than one, because a <see cref="Label"/> paints its
+        /// whole <see cref="Control.Text"/> in one <see cref="Control.ForeColor"/> - there is no
+        /// way to colour one character of it differently without owner-drawing the entire thing.
+        /// </summary>
+        private static Control BuildLabel(FieldSpec f)
         {
-            Text = f.Required ? f.Label + " *" : f.Label,
-            Font = UiTheme.Label,
-            ForeColor = UiTheme.TextPrimary,
-            AutoSize = true,
-            Margin = new Padding(0, 0, 0, 4),
-            UseMnemonic = false
-        };
+            var caption = new Label
+            {
+                Text = f.Label,
+                Font = UiTheme.Label,
+                ForeColor = UiTheme.TextPrimary,
+                AutoSize = true,
+                Margin = new Padding(0),
+                UseMnemonic = false
+            };
+
+            if (!f.Required) return caption;
+
+            var row = new FlowLayoutPanel
+            {
+                FlowDirection = FlowDirection.LeftToRight,
+                WrapContents = false,
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                Margin = new Padding(0, 0, 0, 4)
+            };
+
+            row.Controls.Add(caption);
+            row.Controls.Add(new Label
+            {
+                Text = " *",
+                Font = UiTheme.Label,
+                ForeColor = UiTheme.Danger,
+                AutoSize = true,
+                Margin = new Padding(0),
+                UseMnemonic = false
+            });
+
+            return row;
+        }
 
         private static Control BuildControl(FieldSpec f, int width)
         {
@@ -295,6 +446,7 @@ namespace ERP_Project1
                         ScrollBars = ScrollBars.Vertical,
                         Font = UiTheme.Body,
                         BorderStyle = BorderStyle.FixedSingle,
+                        MaxLength = f.MaxLength ?? DefaultMaxLength,
                         Margin = new Padding(0)
                     };
 
@@ -345,18 +497,22 @@ namespace ERP_Project1
                         Font = UiTheme.Body,
                         BorderStyle = BorderStyle.FixedSingle,
                         UseSystemPasswordChar = true,
+                        MaxLength = f.MaxLength ?? DefaultMaxLength,
                         Margin = new Padding(0)
                     };
 
                 case FieldKind.Number:
                 case FieldKind.Money:
                 case FieldKind.Integer:
-                    return new TextBox
+                    var amount = new TextBox
                     {
+                        // Money seeds at two decimals, matching how the same figure is written
+                        // in every grid, receipt and total in the app; a plain number keeps the
+                        // shorter form, since a quantity of 5 is not "5.00" anywhere else either.
                         Text = f.Value switch
                         {
                             null => "",
-                            decimal dec => dec.ToString("0.##"),
+                            decimal dec => dec.ToString(f.Kind == FieldKind.Money ? "0.00" : "0.##"),
                             _ => f.Value.ToString()
                         },
                         Width = 220,
@@ -366,6 +522,25 @@ namespace ERP_Project1
                         Margin = new Padding(0)
                     };
 
+                    UiKit.AttachNumericFilter(amount,
+                        allowDecimal: f.Kind != FieldKind.Integer,
+                        allowNegative: (f.Minimum ?? 0m) < 0m);
+
+                    return amount;
+
+                case FieldKind.Phone:
+                    var phone = new TextBox
+                    {
+                        Text = f.Value?.ToString() ?? "",
+                        Width = width,
+                        Font = UiTheme.Body,
+                        BorderStyle = BorderStyle.FixedSingle,
+                        MaxLength = f.MaxLength ?? DefaultMaxLength,
+                        Margin = new Padding(0)
+                    };
+                    UiKit.AttachPhoneFilter(phone);
+                    return phone;
+
                 default:
                     return new TextBox
                     {
@@ -373,9 +548,46 @@ namespace ERP_Project1
                         Width = width,
                         Font = UiTheme.Body,
                         BorderStyle = BorderStyle.FixedSingle,
+                        MaxLength = f.MaxLength ?? DefaultMaxLength,
                         Margin = new Padding(0)
                     };
             }
+        }
+
+        /// <summary>
+        /// A money box with the peso sign beside it. Purely a caption: the box's own text and
+        /// the value read back off it are exactly what they were without it, so nothing about
+        /// what gets sent to the API changes.
+        /// </summary>
+        private static Panel BuildMoneyRow(TextBox box)
+        {
+            const int prefixWidth = 20;
+
+            var row = new Panel
+            {
+                Width = box.Width + prefixWidth,
+                Height = box.PreferredHeight,
+                Margin = new Padding(0)
+            };
+
+            var prefix = new Label
+            {
+                Text = "₱",
+                Font = UiTheme.BodyStrong,
+                ForeColor = UiTheme.TextSecondary,
+                AutoSize = false,
+                Width = prefixWidth,
+                Height = row.Height,
+                TextAlign = ContentAlignment.MiddleLeft,
+                Location = new Point(0, 0),
+                UseMnemonic = false
+            };
+
+            box.Location = new Point(prefixWidth, 0);
+
+            row.Controls.Add(prefix);
+            row.Controls.Add(box);
+            return row;
         }
 
         /// <summary>A password box with a Show/Hide toggle beside it.</summary>
@@ -403,31 +615,38 @@ namespace ERP_Project1
         /// <summary>
         /// Everything checkable without the server. The messages are the ones the operator
         /// needs, naming the field rather than restating a rule.
+        ///
+        /// Every field is checked, not just up to the first bad one, so an operator fixing a
+        /// form is told about all of it at once rather than discovering the next problem each
+        /// time they press Save. One message per field - the first rule that field breaks -
+        /// since a field that is both blank and too short has only one thing to do about it.
         /// </summary>
-        private string? ValidateFields()
+        private List<(FieldSpec Field, string Message)> ValidateFields()
         {
+            var problems = new List<(FieldSpec, string)>();
+
             foreach (var f in _fields)
             {
                 var text = f.Text;
 
                 if (f.Required && f.Kind is not FieldKind.Check && string.IsNullOrWhiteSpace(text))
                 {
-                    Focus(f);
-                    return f.Kind switch
+                    problems.Add((f, f.Kind switch
                     {
                         FieldKind.Combo => $"Please choose a {f.Label.ToLowerInvariant()}.",
                         FieldKind.Money or FieldKind.Number or FieldKind.Integer =>
                             $"Please enter {Article(f.Label)}.",
                         _ => $"{f.Label} is required."
-                    };
+                    }));
+                    continue;
                 }
 
                 if (string.IsNullOrWhiteSpace(text)) continue;
 
                 if (f.MaxLength is { } max && text.Length > max)
                 {
-                    Focus(f);
-                    return $"{f.Label} cannot be longer than {max} characters.";
+                    problems.Add((f, $"{f.Label} cannot be longer than {max} characters."));
+                    continue;
                 }
 
                 switch (f.Kind)
@@ -435,21 +654,21 @@ namespace ERP_Project1
                     case FieldKind.Email:
                         if (!EmailPattern.IsMatch(text))
                         {
-                            Focus(f);
-                            return "Please enter a valid email address.";
+                            problems.Add((f, "Please enter a valid email address."));
+                            continue;
                         }
                         break;
 
                     case FieldKind.Integer:
                         if (!int.TryParse(text, NumberStyles.Any, CultureInfo.CurrentCulture, out var whole))
                         {
-                            Focus(f);
-                            return $"Please enter a whole number for {f.Label.ToLowerInvariant()}.";
+                            problems.Add((f, $"Please enter a whole number for {f.Label.ToLowerInvariant()}."));
+                            continue;
                         }
                         if (NumberProblem(f, whole) is { } wholeProblem)
                         {
-                            Focus(f);
-                            return wholeProblem;
+                            problems.Add((f, wholeProblem));
+                            continue;
                         }
                         break;
 
@@ -457,35 +676,69 @@ namespace ERP_Project1
                     case FieldKind.Money:
                         if (!decimal.TryParse(text, NumberStyles.Any, CultureInfo.CurrentCulture, out var number))
                         {
-                            Focus(f);
-                            return f.Kind == FieldKind.Money
+                            problems.Add((f, f.Kind == FieldKind.Money
                                 ? "Please enter a valid amount."
-                                : $"Please enter a valid number for {f.Label.ToLowerInvariant()}.";
+                                : $"Please enter a valid number for {f.Label.ToLowerInvariant()}."));
+                            continue;
                         }
                         if (NumberProblem(f, number) is { } numberProblem)
                         {
-                            Focus(f);
-                            return numberProblem;
+                            problems.Add((f, numberProblem));
+                            continue;
                         }
                         break;
 
                     case FieldKind.Date:
                         if (f.Date.Year < 1900 || f.Date.Year > 2200)
                         {
-                            Focus(f);
-                            return "Please enter a valid date.";
+                            problems.Add((f, "Please enter a valid date."));
+                            continue;
                         }
                         break;
                 }
 
                 if (f.Validate is not null && f.Validate(f) is { } custom)
                 {
-                    Focus(f);
-                    return custom;
+                    problems.Add((f, custom));
                 }
             }
 
-            return null;
+            return problems;
+        }
+
+        /// <summary>
+        /// Puts each problem under the field it belongs to, so the operator reads "this one, and
+        /// why" beside the box rather than one sentence at the top about a field they then have
+        /// to find. The banner is kept for the count alone, and only when there is more than one
+        /// - repeating a single message twice on the same screen says nothing the inline line
+        /// did not already say.
+        /// </summary>
+        private void ShowFieldProblems(List<(FieldSpec Field, string Message)> problems)
+        {
+            ClearFieldProblems();
+
+            foreach (var (field, message) in problems)
+            {
+                if (field.ErrorLabel is null) continue;
+
+                field.ErrorLabel.Text = "⚠  " + message;
+                field.ErrorLabel.Visible = true;
+            }
+
+            ShowError(problems.Count > 1 ? $"{problems.Count} fields need attention." : null);
+
+            Focus(problems[0].Field);
+        }
+
+        private void ClearFieldProblems()
+        {
+            foreach (var f in _fields)
+            {
+                if (f.ErrorLabel is null) continue;
+
+                f.ErrorLabel.Visible = false;
+                f.ErrorLabel.Text = "";
+            }
         }
 
         private static string? NumberProblem(FieldSpec f, decimal value)
@@ -528,9 +781,11 @@ namespace ERP_Project1
         {
             if (_saving) return;
 
-            if (ValidateFields() is { } problem)
+            var problems = ValidateFields();
+
+            if (problems.Count > 0)
             {
-                ShowError(problem);
+                ShowFieldProblems(problems);
                 return;
             }
 
@@ -541,6 +796,7 @@ namespace ERP_Project1
                 _saveButton.Text = "Working…";
                 Cursor = Cursors.WaitCursor;
                 ShowError(null);
+                ClearFieldProblems();
 
                 var serverProblem = await _save(_fields);
 

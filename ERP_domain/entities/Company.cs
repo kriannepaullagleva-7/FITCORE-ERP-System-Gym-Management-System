@@ -20,5 +20,11 @@ namespace ERP_domain.entities
 
         public ICollection<Device> Devices { get; set; } = new List<Device>();
         public ICollection<AppUser> Users { get; set; } = new List<AppUser>();
+
+        /// <summary>
+        /// This company's subscription history. Platform data: a tenant never reads it, and it
+        /// is what the Super Admin's revenue and churn figures are computed from.
+        /// </summary>
+        public ICollection<CompanySubscription> Subscriptions { get; set; } = new List<CompanySubscription>();
     }
 }

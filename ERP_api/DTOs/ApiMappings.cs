@@ -1,4 +1,5 @@
 using ERP_domain.entities;
+using ERP_infrastructure.services;
 
 namespace ERP_api.DTOs
 {
@@ -11,13 +12,18 @@ namespace ERP_api.DTOs
         {
             SaleId = sale.SaleId,
             MemberId = sale.MemberId,
+            WalkInName = sale.WalkInName,
             SaleDate = sale.SaleDate,
             Subtotal = sale.Subtotal,
             Discount = sale.Discount,
             TotalAmount = sale.TotalAmount,
             Status = sale.Status,
             CashierEmployeeId = sale.CashierEmployeeId,
+            ProcessedByUserId = sale.ProcessedByUserId,
+            ProcessedBy = sale.ProcessedBy,
             Notes = sale.Notes,
+            AmountTendered = sale.AmountTendered,
+            ChangeGiven = sale.ChangeGiven,
             Items = sale.Items.Select(i => new SaleItemDto
             {
                 SaleItemId = i.SaleItemId,
@@ -31,6 +37,7 @@ namespace ERP_api.DTOs
         {
             PaymentId = payment.PaymentId,
             MemberId = payment.MemberId,
+            WalkInName = payment.WalkInName,
             SubscriptionId = payment.SubscriptionId,
             SaleId = payment.SaleId,
             Amount = payment.Amount,
@@ -38,13 +45,20 @@ namespace ERP_api.DTOs
             Method = payment.Method,
             ReferenceNo = payment.ReferenceNo,
             Status = payment.Status,
-            Notes = payment.Notes
+            Notes = payment.Notes,
+            Category = payment.Category,
+            ProcessedByUserId = payment.ProcessedByUserId,
+            ProcessedBy = payment.ProcessedBy,
+            AmountTendered = payment.AmountTendered,
+            ChangeGiven = payment.ChangeGiven
         };
 
         public static SubscriptionDto ToDto(this Subscription subscription) => new()
         {
             SubscriptionId = subscription.SubscriptionId,
             MemberId = subscription.MemberId,
+            WalkInName = subscription.WalkInName,
+            WalkInPhone = subscription.WalkInPhone,
             PlanId = subscription.PlanId,
             StartDate = subscription.StartDate,
             EndDate = subscription.EndDate,
@@ -85,18 +99,6 @@ namespace ERP_api.DTOs
             UpdatedAt = product.UpdatedAt
         };
 
-        public static CustomerDto ToDto(this Customer customer) => new()
-        {
-            CustomerId = customer.CustomerId,
-            CustomerCode = customer.CustomerCode,
-            CustomerName = customer.CustomerName,
-            ContactNumber = customer.ContactNumber,
-            EmailAddress = customer.EmailAddress,
-            Address = customer.Address,
-            IsActive = customer.IsActive,
-            CreatedAt = customer.CreatedAt
-        };
-
         public static SupplierDto ToDto(this Supplier supplier) => new()
         {
             SupplierId = supplier.SupplierId,
@@ -123,7 +125,51 @@ namespace ERP_api.DTOs
             Email = employee.Email,
             HireDate = employee.HireDate,
             BasicSalary = employee.BasicSalary,
+            HourlyRate = employee.HourlyRate,
             Status = employee.Status
+        };
+
+        public static EmployeeAccountResultDto ToDto(this EmployeeAccountResult result) => new()
+        {
+            Outcome = result.Outcome.ToString(),
+            Message = result.Message,
+            AccountUsable = result.AccountUsable
+        };
+
+        public static AuditEventDto ToDto(this AuditEventView view) => new()
+        {
+            AuditEventId = view.AuditEventId,
+            OccurredAt = view.OccurredAt,
+            Username = view.Username,
+            RoleKey = view.RoleKey,
+            Action = view.Action,
+            Module = view.Module,
+            EntityName = view.EntityName,
+            EntityId = view.EntityId,
+            OldValues = view.OldValues,
+            NewValues = view.NewValues,
+            Summary = view.Summary,
+            IpAddress = view.IpAddress
+        };
+
+        public static AttendanceDto ToDto(this AttendanceView view) => new()
+        {
+            AttendanceId = view.AttendanceId,
+            EmployeeId = view.EmployeeId,
+            EmployeeCode = view.EmployeeCode,
+            EmployeeName = view.EmployeeName,
+            Position = view.Position,
+            Date = view.Date,
+            TimeIn = view.TimeIn,
+            TimeOut = view.TimeOut,
+            RegularHours = view.RegularHours,
+            OvertimeHours = view.OvertimeHours,
+            Status = view.Status,
+            Notes = view.Notes,
+            RecordedByUserId = view.RecordedByUserId,
+            RecordedBy = view.RecordedBy,
+            ModifiedByUserId = view.ModifiedByUserId,
+            ModifiedBy = view.ModifiedBy
         };
     }
 }

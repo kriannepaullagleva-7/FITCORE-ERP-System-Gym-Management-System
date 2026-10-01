@@ -283,6 +283,14 @@ namespace ERP_Project1
         // painted straight over by the grid filling the rest of the body.
         private string _restingStatus = "";
 
+        /// <summary>
+        /// The raw message behind the status strip's current red text, kept so a caller that
+        /// wants to show the same failure somewhere more prominent - the empty-state-shaped
+        /// "unable to load" panel, say - does not have to parse it back out of the decorated
+        /// "⚠ " status line.
+        /// </summary>
+        protected string? LastErrorMessage { get; private set; }
+
         /// <summary>The ordinary record-count line. Remembered, so feedback can revert to it.</summary>
         protected void SetStatus(string text)
         {
@@ -304,6 +312,8 @@ namespace ERP_Project1
         {
             if (string.IsNullOrWhiteSpace(message))
             {
+                LastErrorMessage = null;
+
                 if (_successTimer is null)
                 {
                     StatusLine.ForeColor = UiTheme.TextMuted;
@@ -312,6 +322,7 @@ namespace ERP_Project1
                 return;
             }
 
+            LastErrorMessage = message;
             StopFeedbackTimer();
 
             // A multi-line validation summary is longer than a status strip should carry, so
@@ -361,14 +372,26 @@ namespace ERP_Project1
 
         /// <summary>Replaces the grid with an invitation when there is genuinely nothing to show.</summary>
         protected void ShowEmptyState(string headline, string detail,
-                                      string? actionText = null, EventHandler? action = null)
+                                      string? actionText = null, EventHandler? action = null,
+                                      Color? headlineColor = null)
         {
             HideEmptyState();
 
-            _emptyState = UiKit.EmptyState(headline, detail, actionText, action);
+            _emptyState = UiKit.EmptyState(headline, detail, actionText, action, headlineColor);
             _gridHost.Controls.Add(_emptyState);
             _emptyState.BringToFront();
         }
+
+        /// <summary>
+        /// The same panel <see cref="ShowEmptyState"/> shows for "nothing here yet", but for
+        /// "the list could not be read" instead - headline in the danger colour, and the action
+        /// is a retry rather than an invitation to create the first record. Reserved for the
+        /// screen's own initial load failing; a failed Edit or Delete on a page that already
+        /// has valid rows on screen keeps the ordinary status-strip banner instead, since
+        /// blanking a grid that still holds good data would be a regression, not a clarification.
+        /// </summary>
+        protected void ShowErrorState(string headline, string detail, EventHandler onRetry) =>
+            ShowEmptyState(headline, detail, "Retry", onRetry, UiTheme.Danger);
 
         protected void HideEmptyState()
         {

@@ -34,6 +34,15 @@ namespace ERP_api.Infrastructure
         public const string FullName = "full_name";
         public const string EmployeeId = "employee_id";
 
+        /// <summary>
+        /// The branch this account is bound to, present only when it is bound to one.
+        ///
+        /// Signed, so it is the one branch statement a caller cannot argue with: a branch
+        /// manager carries this and is narrowed to it for the life of the token. An Admin/Owner
+        /// has no such claim, which is what makes them free to select a branch instead.
+        /// </summary>
+        public const string BranchId = "branch_id";
+
         /// <summary>One claim of this type per module the user may use.</summary>
         public const string Module = "module";
     }

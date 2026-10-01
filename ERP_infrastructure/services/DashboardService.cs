@@ -33,6 +33,9 @@ namespace ERP_infrastructure.services
 
             var now = DateTime.UtcNow;
             var soonCutoff = now.AddDays(MemberService.ExpiringSoonDays);
+            var cutoff1Day = now.AddDays(1);
+            var cutoff3Days = now.AddDays(3);
+            var cutoff7Days = now.AddDays(7);
             var monthStart = new DateTime(now.Year, now.Month, 1, 0, 0, 0, DateTimeKind.Utc);
             var dayStart = now.Date;
             var trendStart = dayStart.AddDays(-(TrendDays - 1));
@@ -64,6 +67,12 @@ namespace ERP_infrastructure.services
                     Active = g.Count(s => s.Status == "Active"),
                     ExpiringSoon = g.Count(s =>
                         s.Status == "Active" && s.EndDate >= now && s.EndDate <= soonCutoff),
+                    ExpiringWithin1Day = g.Count(s =>
+                        s.Status == "Active" && s.EndDate >= now && s.EndDate <= cutoff1Day),
+                    ExpiringWithin3Days = g.Count(s =>
+                        s.Status == "Active" && s.EndDate >= now && s.EndDate <= cutoff3Days),
+                    ExpiringWithin7Days = g.Count(s =>
+                        s.Status == "Active" && s.EndDate >= now && s.EndDate <= cutoff7Days),
                     Expired = g.Count(s => s.Status == "Expired"),
                     Cancelled = g.Count(s => s.Status == "Cancelled"),
                     MembersWithPlan = g.Select(s => s.MemberId).Distinct().Count()
@@ -73,6 +82,9 @@ namespace ERP_infrastructure.services
             summary.ActiveSubscriptions = subscriptionStats?.Active ?? 0;
             summary.ExpiringSoon = subscriptionStats?.ExpiringSoon ?? 0;
             summary.ExpiredSubscriptions = subscriptionStats?.Expired ?? 0;
+            summary.ExpiringWithin1Day = subscriptionStats?.ExpiringWithin1Day ?? 0;
+            summary.ExpiringWithin3Days = subscriptionStats?.ExpiringWithin3Days ?? 0;
+            summary.ExpiringWithin7Days = subscriptionStats?.ExpiringWithin7Days ?? 0;
 
             summary.TotalPlans = await _context.MembershipPlans.CountAsync();
             summary.TotalProducts = await _context.Products.CountAsync();
@@ -223,12 +235,14 @@ namespace ERP_infrastructure.services
                     ThisMonth = g.Sum(p => p.PeriodStart >= monthStart ? p.NetPay : 0m),
                     Outstanding = g.Sum(p => p.Status != "Paid" ? p.NetPay : 0m),
                     PaidThisMonth = g.Sum(p =>
-                        p.Status == "Paid" && p.PaidDate != null && p.PaidDate >= monthStart ? p.NetPay : 0m)
+                        p.Status == "Paid" && p.PaidDate != null && p.PaidDate >= monthStart ? p.NetPay : 0m),
+                    Draft = g.Count(p => p.Status == "Draft")
                 })
                 .FirstOrDefaultAsync();
 
             summary.PayrollThisMonth = payrollStats?.ThisMonth ?? 0m;
             summary.PayrollOutstanding = payrollStats?.Outstanding ?? 0m;
+            summary.DraftPayrollRuns = payrollStats?.Draft ?? 0;
 
             var expenseStats = await _context.Expenses
                 .GroupBy(_ => 1)

@@ -72,7 +72,9 @@ namespace ERP_api.Controllers
                 dto.Method,
                 dto.ReferenceNo,
                 dto.Status,
-                dto.Notes);
+                dto.Notes,
+                dto.WalkInName,
+                dto.AmountTendered);
 
             return CreatedAtAction(
                 nameof(GetById), new { id = payment.PaymentId }, payment.ToDto());
@@ -92,7 +94,8 @@ namespace ERP_api.Controllers
                 dto.Method,
                 dto.ReferenceNo,
                 dto.Status,
-                dto.Notes);
+                dto.Notes,
+                dto.AmountTendered);
 
             return payment is null ? NotFound() : Ok(payment.ToDto());
         }

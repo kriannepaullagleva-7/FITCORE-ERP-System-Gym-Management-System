@@ -98,7 +98,7 @@ namespace ERP_infrastructure.services
             CancellationToken cancellationToken = default)
         {
             _context.AuditEvents.Add(AuditEventFactory.Create(
-                actor, action, ErpModules.UserAccess, nameof(AppUser),
+                actor, action, ErpModules.SystemAdmin, nameof(AppUser),
                 actor.AppUserId?.ToString(), summary));
 
             await _context.SaveChangesAsync(cancellationToken);

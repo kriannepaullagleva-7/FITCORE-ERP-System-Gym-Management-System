@@ -144,6 +144,30 @@ namespace ERP_api.Infrastructure
 
         public static bool HasModule(this ClaimsPrincipal user, string module) =>
             user.FindAll(FitCoreClaims.Module)
-                .Any(c => string.Equals(c.Value, module, StringComparison.OrdinalIgnoreCase));
+                .Any(c => string.Equals(
+                    ErpModules.Normalise(c.Value), ErpModules.Normalise(module),
+                    StringComparison.OrdinalIgnoreCase));
+
+        /// <summary>
+        /// The plan the caller's company is licensed for, from the signed token.
+        ///
+        /// Falls back to Micro - the most restrictive tier - rather than throwing, so a token
+        /// minted before the claim existed is treated as the smallest plan rather than as an
+        /// unlicensed one that trips a 500.
+        /// </summary>
+        public static EnterpriseTier GetEnterpriseTier(this ClaimsPrincipal user) =>
+            Enum.TryParse<EnterpriseTier>(
+                user.FindFirstValue(FitCoreClaims.EnterpriseTier), ignoreCase: true, out var tier)
+                ? tier
+                : EnterpriseTier.Micro;
+
+        /// <summary>Whether the caller may open a named subfeature. Mirrors <c>[RequireSubmodule]</c>.</summary>
+        public static bool HasSubmodule(this ClaimsPrincipal user, string submodule) =>
+            ErpModules.IsSubmoduleAllowed(
+                submodule, user.GetEnterpriseTier(), user.GetRoleLevel(), user.HasModule);
+
+        /// <summary>True for the platform account, which administers FitCore rather than a gym.</summary>
+        public static bool IsPlatformAdministrator(this ClaimsPrincipal user) =>
+            string.Equals(user.GetRoleKey(), ErpRoles.SuperAdmin, StringComparison.OrdinalIgnoreCase);
     }
 }

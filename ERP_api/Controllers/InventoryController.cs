@@ -63,10 +63,11 @@ namespace ERP_api.Controllers
         [ProducesResponseType(typeof(InventoryView), StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
         public async Task<ActionResult<InventoryView>> StockIn(
-            int productId, [FromBody] StockMovementRequestDto dto)
+            int productId, [FromBody] StockInRequestDto dto)
         {
             var row = await _inventoryService.StockInAsync(
-                productId, dto.Quantity, dto.Reference, dto.Notes, dto.RecordedByEmployeeId);
+                productId, dto.Quantity, dto.SupplierId, dto.Reference, dto.Notes,
+                dto.RecordedByEmployeeId);
 
             return Ok(row);
         }
@@ -75,10 +76,10 @@ namespace ERP_api.Controllers
         [ProducesResponseType(typeof(InventoryView), StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
         public async Task<ActionResult<InventoryView>> StockOut(
-            int productId, [FromBody] StockMovementRequestDto dto)
+            int productId, [FromBody] StockOutRequestDto dto)
         {
             var row = await _inventoryService.StockOutAsync(
-                productId, dto.Quantity, dto.Reference, dto.Notes, dto.RecordedByEmployeeId);
+                productId, dto.Quantity, dto.Reason, dto.Notes, dto.RecordedByEmployeeId);
 
             return Ok(row);
         }

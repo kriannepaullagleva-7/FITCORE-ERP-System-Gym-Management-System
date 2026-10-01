@@ -26,6 +26,19 @@ namespace ERP_infrastructure.services
 
         /// <summary>Returns an archived member to active use.</summary>
         Task<Member?> RestoreMemberAsync(int id);
+
+        /// <summary>
+        /// Pauses a membership without ending it.
+        ///
+        /// Distinct from archiving, which retires somebody who has left. A suspension is a gap
+        /// - an injury, a long trip - that the member is expected to come back from, so the
+        /// reason and the expected return are recorded and the membership resumes rather than
+        /// being re-created.
+        /// </summary>
+        Task<Member?> SuspendMemberAsync(int id, string reason, DateTime? until);
+
+        /// <summary>Ends a suspension and puts the member back on the active roll.</summary>
+        Task<Member?> ReactivateMemberAsync(int id);
         Task<MemberHistoryCounts> GetMemberHistoryCountsAsync(int id);
         Task<Member?> GetMemberWithSubscriptionsAsync(int memberId);
         Task<List<Member>> GetActiveMembersAsync();

@@ -47,6 +47,14 @@ namespace ERP_infrastructure.data
         public DbSet<AppUser> AppUsers => Set<AppUser>();
         public DbSet<AppUserPermission> AppUserPermissions => Set<AppUserPermission>();
 
+        // Platform administration. What FitCore sells, to whom, and for how long. This is
+        // deliberately master-side: a tenant must not be able to read - let alone change -
+        // which plan it is on or what it is being charged, and the Super Admin's revenue and
+        // churn figures have to be answerable without opening a single tenant database.
+        public DbSet<SubscriptionPlan> SubscriptionPlans => Set<SubscriptionPlan>();
+        public DbSet<CompanySubscription> CompanySubscriptions => Set<CompanySubscription>();
+        public DbSet<PlatformSetting> PlatformSettings => Set<PlatformSetting>();
+
         private bool _writingAudit;
 
         public override async Task<int> SaveChangesAsync(
@@ -130,6 +138,79 @@ namespace ERP_infrastructure.data
             });
 
             ConfigureAccessControl(builder);
+            ConfigurePlatformAdministration(builder);
+        }
+
+        /// <summary>
+        /// The subscription registry and the installation's own settings.
+        ///
+        /// A company's <see cref="Company.EnterpriseTier"/> stays the authoritative fact for
+        /// access, and subscribing a company is what sets it. The two are kept apart on
+        /// purpose: recording that a term has lapsed is a billing event, and it must not be the
+        /// same act as revoking a paying customer's data access halfway through a dispute.
+        /// </summary>
+        private static void ConfigurePlatformAdministration(ModelBuilder builder)
+        {
+            builder.Entity<SubscriptionPlan>(entity =>
+            {
+                entity.HasKey(x => x.SubscriptionPlanId);
+                entity.Property(x => x.PlanCode).IsRequired().HasMaxLength(40);
+                entity.Property(x => x.PlanName).IsRequired().HasMaxLength(150);
+                entity.Property(x => x.Description).IsRequired().HasMaxLength(500).HasDefaultValue("");
+                entity.Property(x => x.Capability).IsRequired().HasMaxLength(500).HasDefaultValue("");
+                entity.Property(x => x.MonthlyPrice).HasPrecision(18, 2);
+                entity.Property(x => x.AnnualPrice).HasPrecision(18, 2);
+                entity.Property(x => x.CreatedAt).IsRequired().HasDefaultValueSql("GETUTCDATE()");
+
+                entity.Property(x => x.Tier)
+                      .HasConversion<int>()
+                      .IsRequired()
+                      .HasDefaultValue(EnterpriseTier.Micro)
+                      .HasSentinel(default(EnterpriseTier));
+
+                entity.HasIndex(x => x.PlanCode).IsUnique();
+            });
+
+            builder.Entity<CompanySubscription>(entity =>
+            {
+                entity.HasKey(x => x.CompanySubscriptionId);
+                entity.Property(x => x.BillingCycle).IsRequired().HasMaxLength(20)
+                      .HasDefaultValue(BillingCycles.Monthly);
+                entity.Property(x => x.Status).IsRequired().HasMaxLength(20)
+                      .HasDefaultValue(TenantSubscriptionStatuses.Active);
+                entity.Property(x => x.Notes).IsRequired().HasMaxLength(300).HasDefaultValue("");
+                entity.Property(x => x.Amount).HasPrecision(18, 2);
+                entity.Property(x => x.StartDate).IsRequired();
+                entity.Property(x => x.EndDate).IsRequired();
+                entity.Property(x => x.CreatedAt).IsRequired().HasDefaultValueSql("GETUTCDATE()");
+
+                // Billing history has to outlive an experiment: a company that was registered
+                // and removed still had revenue recognised against it.
+                entity.HasOne(x => x.Company)
+                      .WithMany(c => c.Subscriptions)
+                      .HasForeignKey(x => x.CompanyId)
+                      .OnDelete(DeleteBehavior.Restrict);
+
+                entity.HasOne(x => x.Plan)
+                      .WithMany(p => p.Subscriptions)
+                      .HasForeignKey(x => x.SubscriptionPlanId)
+                      .OnDelete(DeleteBehavior.Restrict);
+
+                entity.HasIndex(x => new { x.CompanyId, x.StartDate });
+                entity.HasIndex(x => x.Status);
+                entity.HasIndex(x => x.EndDate);
+            });
+
+            builder.Entity<PlatformSetting>(entity =>
+            {
+                entity.HasKey(x => x.PlatformSettingId);
+                entity.Property(x => x.SettingKey).IsRequired().HasMaxLength(100);
+                entity.Property(x => x.Value).IsRequired().HasMaxLength(1000).HasDefaultValue("");
+                entity.Property(x => x.UpdatedBy).IsRequired().HasMaxLength(150).HasDefaultValue("");
+                entity.Property(x => x.CreatedAt).IsRequired().HasDefaultValueSql("GETUTCDATE()");
+
+                entity.HasIndex(x => x.SettingKey).IsUnique();
+            });
         }
 
         private static void ConfigureAccessControl(ModelBuilder builder)

@@ -11,5 +11,12 @@ namespace ERP_infrastructure.services
         Task<InventoryReport> GetInventoryReportAsync(DateTime? from, DateTime? to);
         Task<MembershipReport> GetMembershipReportAsync(DateTime? from, DateTime? to);
         Task<ExpenseReport> GetExpenseReportAsync(DateTime? from, DateTime? to);
+        Task<EmployeeReport> GetEmployeeReportAsync(DateTime? from, DateTime? to);
+
+        /// <summary>Payroll cost for a period, with every statutory figure kept separate.</summary>
+        Task<PayrollReport> GetPayrollReportAsync(DateTime? from, DateTime? to);
+
+        /// <summary>The takings, the ledger and the bank set against each other for a period.</summary>
+        Task<PaymentReconciliationView> GetPaymentReconciliationAsync(DateTime? from, DateTime? to);
     }
 }

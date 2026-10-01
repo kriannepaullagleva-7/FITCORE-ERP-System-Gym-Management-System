@@ -45,7 +45,7 @@ builder.Services.AddScoped<ICurrentUserAccessor, HttpCurrentUserAccessor>();
 builder.Services.AddErpTenancy(builder.Configuration);
 
 // Repositories and application services (unchanged implementations).
-builder.Services.AddErpApplicationServices();
+builder.Services.AddErpApplicationServices(builder.Configuration);
 
 // Sign-in, User Access and the start-up bootstrapper, all against the master database.
 builder.Services.AddErpAccessControl(builder.Configuration);
@@ -173,7 +173,18 @@ using (var scope = app.Services.CreateScope())
     try
     {
         var bootstrapper = scope.ServiceProvider.GetRequiredService<IMasterBootstrapper>();
-        await bootstrapper.RunAsync();
+        var report = await bootstrapper.RunAsync();
+
+        // Branches, and the staff that run them. Second because it needs the companies and
+        // roles the master bootstrap has just created, and because it is the only step that
+        // opens a tenant database.
+        var branches = scope.ServiceProvider.GetRequiredService<ITenantBranchBootstrapper>();
+        await branches.RunAsync(report);
+
+        foreach (var action in report.Actions)
+        {
+            logger.LogInformation("Bootstrap: {Action}", action);
+        }
     }
     catch (Exception ex)
     {
@@ -208,6 +219,10 @@ app.UseAuthorization();
 // Must run after authentication so the company claim is visible, and before the controllers
 // that read tenant data.
 app.UseTenantResolution();
+
+// Then the branch, which only means anything once the tenant is known. This is what narrows
+// every branch-scoped query for the rest of the request.
+app.UseBranchResolution();
 
 app.MapControllers();
 

@@ -27,6 +27,7 @@ namespace ERP_infrastructure.repositories
         {
             var query = _context.StockMovements
                 .Include(m => m.Product)
+                .Include(m => m.Supplier)
                 .Include(m => m.RecordedByEmployee)
                 .AsQueryable();
 

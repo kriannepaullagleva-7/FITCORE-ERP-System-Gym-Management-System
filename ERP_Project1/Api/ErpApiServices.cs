@@ -47,25 +47,6 @@ namespace ERP_Project1.Api
             SendAsync<object>(() => Http.DeleteAsync($"{BasePath}/{id}"));
     }
 
-    public class CustomerApiService : ApiServiceBase
-    {
-        private const string BasePath = "api/customers";
-
-        public CustomerApiService(HttpClient http, IApiFailureSink? failures = null) : base(http, failures) { }
-
-        public Task<ApiResult<List<CustomerDto>>> GetAllAsync() =>
-            SendAsync<List<CustomerDto>>(() => Http.GetAsync(BasePath));
-
-        public Task<ApiResult<CustomerDto>> CreateAsync(CreateCustomerDto dto) =>
-            SendAsync<CustomerDto>(() => Http.PostAsJsonAsync(BasePath, dto));
-
-        public Task<ApiResult<CustomerDto>> UpdateAsync(int id, UpdateCustomerDto dto) =>
-            SendAsync<CustomerDto>(() => Http.PutAsJsonAsync($"{BasePath}/{id}", dto));
-
-        public Task<ApiResult<object>> DeleteAsync(int id) =>
-            SendAsync<object>(() => Http.DeleteAsync($"{BasePath}/{id}"));
-    }
-
     public class SupplierApiService : ApiServiceBase
     {
         private const string BasePath = "api/suppliers";
@@ -103,10 +84,10 @@ namespace ERP_Project1.Api
                     ? $"{BasePath}/movements?productId={productId.Value}&take={take}"
                     : $"{BasePath}/movements?take={take}"));
 
-        public Task<ApiResult<InventoryDto>> StockInAsync(int productId, StockMovementRequestDto dto) =>
+        public Task<ApiResult<InventoryDto>> StockInAsync(int productId, StockInRequestDto dto) =>
             SendAsync<InventoryDto>(() => Http.PostAsJsonAsync($"{BasePath}/{productId}/stock-in", dto));
 
-        public Task<ApiResult<InventoryDto>> StockOutAsync(int productId, StockMovementRequestDto dto) =>
+        public Task<ApiResult<InventoryDto>> StockOutAsync(int productId, StockOutRequestDto dto) =>
             SendAsync<InventoryDto>(() => Http.PostAsJsonAsync($"{BasePath}/{productId}/stock-out", dto));
 
         public Task<ApiResult<InventoryDto>> AdjustAsync(int productId, StockAdjustmentDto dto) =>
@@ -230,6 +211,17 @@ namespace ERP_Project1.Api
 
         public Task<ApiResult<object>> DeleteAsync(int id) =>
             SendAsync<object>(() => Http.DeleteAsync($"{BasePath}/{id}"));
+
+        public Task<ApiResult<List<PayrollDto>>> GetPayrollsAsync(int employeeId) =>
+            SendAsync<List<PayrollDto>>(() => Http.GetAsync($"{BasePath}/{employeeId}/payrolls"));
+
+        /// <summary>
+        /// Gives this employee a FitCore sign-in, or reports why not. Safe to call again -
+        /// this is also the retry path when the automatic attempt right after Create could
+        /// not reach the master database.
+        /// </summary>
+        public Task<ApiResult<EmployeeAccountResultDto>> EnsureAccountAsync(int id) =>
+            SendAsync<EmployeeAccountResultDto>(() => Http.PostAsync($"{BasePath}/{id}/account", null));
     }
 
     public class PayrollApiService : ApiServiceBase
@@ -247,6 +239,10 @@ namespace ERP_Project1.Api
         public Task<ApiResult<PayrollDto>> CreateAsync(CreatePayrollDto dto) =>
             SendAsync<PayrollDto>(() => Http.PostAsJsonAsync(BasePath, dto));
 
+        /// <summary>Generates a run from recorded attendance rather than typed hours.</summary>
+        public Task<ApiResult<PayrollDto>> GenerateAsync(GeneratePayrollDto dto) =>
+            SendAsync<PayrollDto>(() => Http.PostAsJsonAsync($"{BasePath}/generate", dto));
+
         public Task<ApiResult<PayrollDto>> UpdateAsync(int id, UpdatePayrollDto dto) =>
             SendAsync<PayrollDto>(() => Http.PutAsJsonAsync($"{BasePath}/{id}", dto));
 
@@ -255,6 +251,56 @@ namespace ERP_Project1.Api
 
         public Task<ApiResult<object>> DeleteAsync(int id) =>
             SendAsync<object>(() => Http.DeleteAsync($"{BasePath}/{id}"));
+    }
+
+    public class AttendanceApiService : ApiServiceBase
+    {
+        private const string BasePath = "api/attendance";
+
+        public AttendanceApiService(HttpClient http, IApiFailureSink? failures = null) : base(http, failures) { }
+
+        public Task<ApiResult<List<AttendanceDto>>> GetAllAsync(
+            int? employeeId = null, DateTime? from = null, DateTime? to = null) =>
+            SendAsync<List<AttendanceDto>>(() => Http.GetAsync(QueryString.Build(
+                BasePath,
+                ("employeeId", employeeId?.ToString()),
+                ("from", QueryString.Date(from)),
+                ("to", QueryString.Date(to)))));
+
+        public Task<ApiResult<AttendancePeriodSummaryDto>> GetSummaryAsync(
+            int employeeId, DateTime periodStart, DateTime periodEnd) =>
+            SendAsync<AttendancePeriodSummaryDto>(() => Http.GetAsync(
+                $"{BasePath}/summary?employeeId={employeeId}" +
+                $"&periodStart={QueryString.Date(periodStart)}&periodEnd={QueryString.Date(periodEnd)}"));
+
+        public Task<ApiResult<AttendanceDto>> CreateAsync(CreateAttendanceDto dto) =>
+            SendAsync<AttendanceDto>(() => Http.PostAsJsonAsync(BasePath, dto));
+
+        public Task<ApiResult<AttendanceDto>> UpdateAsync(int id, UpdateAttendanceDto dto) =>
+            SendAsync<AttendanceDto>(() => Http.PutAsJsonAsync($"{BasePath}/{id}", dto));
+
+        public Task<ApiResult<object>> DeleteAsync(int id) =>
+            SendAsync<object>(() => Http.DeleteAsync($"{BasePath}/{id}"));
+    }
+
+    public class AuditApiService : ApiServiceBase
+    {
+        private const string BasePath = "api/audit-events";
+
+        public AuditApiService(HttpClient http, IApiFailureSink? failures = null) : base(http, failures) { }
+
+        public Task<ApiResult<List<AuditEventDto>>> SearchAsync(
+            DateTime? from = null, DateTime? to = null, string? module = null, string? action = null,
+            string? entityName = null, string? entityId = null, int? take = null) =>
+            SendAsync<List<AuditEventDto>>(() => Http.GetAsync(QueryString.Build(
+                BasePath,
+                ("from", QueryString.Date(from)),
+                ("to", QueryString.Date(to)),
+                ("module", module),
+                ("action", action),
+                ("entityName", entityName),
+                ("entityId", entityId),
+                ("take", take?.ToString()))));
     }
 
     public class ExpenseApiService : ApiServiceBase
@@ -268,15 +314,27 @@ namespace ERP_Project1.Api
         /// shipped to the browser just to be narrowed down here.
         /// </summary>
         public Task<ApiResult<List<ExpenseDto>>> GetAllAsync(
-            DateTime? from = null, DateTime? to = null, string? category = null) =>
+            DateTime? from = null, DateTime? to = null,
+            string? category = null, string? status = null) =>
             SendAsync<List<ExpenseDto>>(() => Http.GetAsync(QueryString.Build(
                 BasePath,
                 ("from", QueryString.Date(from)),
                 ("to", QueryString.Date(to)),
-                ("category", category))));
+                ("category", category),
+                ("status", status))));
 
-        public Task<ApiResult<ExpenseSummaryDto>> GetSummaryAsync() =>
-            SendAsync<ExpenseSummaryDto>(() => Http.GetAsync($"{BasePath}/summary"));
+        public Task<ApiResult<ExpenseSummaryDto>> GetSummaryAsync(
+            DateTime? from = null, DateTime? to = null) =>
+            SendAsync<ExpenseSummaryDto>(() => Http.GetAsync(QueryString.Build(
+                $"{BasePath}/summary",
+                ("from", QueryString.Date(from)), ("to", QueryString.Date(to)))));
+
+        /// <summary>Settles an expense that was recorded as owed.</summary>
+        public Task<ApiResult<ExpenseDto>> SettleAsync(
+            int id, string paymentMethod, int? bankAccountId) =>
+            SendAsync<ExpenseDto>(() => Http.PostAsJsonAsync(
+                $"{BasePath}/{id}/settle",
+                new SettleExpenseDto { PaymentMethod = paymentMethod, BankAccountId = bankAccountId }));
 
         public Task<ApiResult<List<string>>> GetCategoriesAsync() =>
             SendAsync<List<string>>(() => Http.GetAsync($"{BasePath}/categories"));

@@ -191,7 +191,19 @@ namespace ERP_infrastructure.services
                     .ThenInclude(r => r.Permissions)
                 .Include(u => u.Permissions);
 
-        private static AuthenticatedUser Project(AppUser user) => new()
+        private static AuthenticatedUser Project(AppUser user)
+        {
+            var projected = ProjectModules(user);
+
+            // Derived from what was just resolved rather than read from anywhere, so the
+            // subfeatures a user is offered can never name a module they do not hold.
+            projected.Submodules = PermissionResolver.ResolveSubmodules(
+                projected.EnterpriseTier, projected.RoleLevel, projected.Modules);
+
+            return projected;
+        }
+
+        private static AuthenticatedUser ProjectModules(AppUser user) => new()
         {
             AppUserId = user.AppUserId,
             Username = user.Username,
@@ -208,6 +220,7 @@ namespace ERP_infrastructure.services
             RoleLevel = user.Role.HierarchyLevel,
 
             EmployeeId = user.EmployeeId,
+            BranchId = user.BranchId,
             MustChangePassword = user.MustChangePassword,
 
             Modules = PermissionResolver.Resolve(

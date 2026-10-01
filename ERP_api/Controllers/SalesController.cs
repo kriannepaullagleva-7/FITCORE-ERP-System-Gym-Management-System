@@ -93,7 +93,8 @@ namespace ERP_api.Controllers
                 .ToList();
 
             var sale = await _saleService.CreateSaleAsync(
-                dto.MemberId, items, dto.Discount, dto.CashierEmployeeId, dto.Notes);
+                dto.MemberId, items, dto.Discount, dto.CashierEmployeeId, dto.Notes,
+                dto.SettleNow, dto.PaymentMethod, dto.WalkInName, dto.AmountTendered);
 
             return CreatedAtAction(nameof(GetById), new { id = sale.SaleId }, sale.ToDto());
         }

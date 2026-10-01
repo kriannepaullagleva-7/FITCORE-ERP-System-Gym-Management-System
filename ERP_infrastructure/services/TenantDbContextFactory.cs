@@ -20,32 +20,39 @@ namespace ERP_infrastructure.services
         private readonly ITenantDbContextOptionsFactory _optionsFactory;
         private readonly ITenantContext _tenantContext;
         private readonly ICurrentUserAccessor _actor;
+        private readonly IBranchContext _branch;
 
         public TenantDbContextFactory(
             ITenantConnectionStringProvider connectionStringProvider,
             ITenantDbContextOptionsFactory optionsFactory,
             ITenantContext tenantContext,
-            ICurrentUserAccessor actor)
+            ICurrentUserAccessor actor,
+            IBranchContext branch)
         {
             _connectionStringProvider = connectionStringProvider;
             _optionsFactory = optionsFactory;
             _tenantContext = tenantContext;
             _actor = actor;
+            _branch = branch;
         }
 
         public async Task<TenantErpDbContext> CreateAsync(int companyId)
         {
             var connection = await _connectionStringProvider.GetConnectionAsync(companyId);
             return new TenantErpDbContext(
-                _optionsFactory.GetOptions(connection.ConnectionString), _actor);
+                _optionsFactory.GetOptions(connection.ConnectionString), _actor, _branch);
         }
 
         public TenantErpDbContext CreateForCurrentTenant()
         {
             // ConnectionString throws a TenantResolutionException when no tenant was resolved,
             // which is what we want: better a clear failure than reading the wrong database.
+            //
+            // The branch scope is handed over the same way the actor is, and for the same
+            // reason: it belongs to this request, and the options it would otherwise hang on
+            // are cached for the life of the process.
             return new TenantErpDbContext(
-                _optionsFactory.GetOptions(_tenantContext.ConnectionString), _actor);
+                _optionsFactory.GetOptions(_tenantContext.ConnectionString), _actor, _branch);
         }
     }
 }

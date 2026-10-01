@@ -9,8 +9,13 @@ namespace ERP_infrastructure.services
     public class SaleView
     {
         public int SaleId { get; set; }
-        public int MemberId { get; set; }
+
+        /// <summary>Null for a walk-in sale. See <see cref="MemberName"/>.</summary>
+        public int? MemberId { get; set; }
+
+        /// <summary>The member's name, or the walk-in's typed name, or "Walk-In" if neither.</summary>
         public string MemberName { get; set; } = string.Empty;
+
         public DateTime SaleDate { get; set; }
         public int ItemCount { get; set; }
         public int TotalQuantity { get; set; }
@@ -21,7 +26,20 @@ namespace ERP_infrastructure.services
 
         public string Status { get; set; } = "Completed";
         public int? CashierEmployeeId { get; set; }
-        public string CashierName { get; set; } = "- unassigned -";
+
+        /// <summary>
+        /// Blank when there is no linked employee - never a placeholder word - so a caller that
+        /// wants to fall back to <see cref="ProcessedBy"/> can tell the two cases apart.
+        /// </summary>
+        public string CashierName { get; set; } = string.Empty;
+
+        /// <summary>
+        /// The signed-in user who completed the sale. Distinct from the cashier employee:
+        /// a Micro tenant has no Employees module, so this is the only attribution it gets.
+        /// </summary>
+        public int? ProcessedByUserId { get; set; }
+        public string ProcessedBy { get; set; } = string.Empty;
+
         public string Notes { get; set; } = string.Empty;
 
         public decimal AmountPaid { get; set; }
@@ -29,6 +47,12 @@ namespace ERP_infrastructure.services
 
         /// <summary>Paid, Partially Paid, Unpaid, or Cancelled.</summary>
         public string PaymentStatus { get; set; } = "Unpaid";
+
+        /// <summary>Cash handed over, when the sale was paid in cash.</summary>
+        public decimal? AmountTendered { get; set; }
+
+        /// <summary><see cref="AmountTendered"/> minus <see cref="TotalAmount"/>.</summary>
+        public decimal? ChangeGiven { get; set; }
     }
 
     // One line item within a sale.

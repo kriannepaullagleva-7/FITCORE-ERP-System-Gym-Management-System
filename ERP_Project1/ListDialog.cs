@@ -33,7 +33,20 @@ namespace ERP_Project1
             var grid = UiKit.Grid();
             grid.AutoGenerateColumns = false;
             configure(grid);
+
             grid.DataSource = rows;
+
+            // Applied once, here, rather than by every caller: every detail grid in FitCore
+            // - a stock ledger, a sale's lines, a pay history - goes through this dialog, so
+            // fixing the floor in one place fixes it everywhere a column would otherwise be
+            // squeezed past its own header on a narrow window.
+            //
+            // Deliberately after the data source is set rather than before: an explicitly
+            // configured grid already has its columns at this point either way, but an
+            // auto-generated one (Show(items), used by most of the detail popups in the app)
+            // does not create its columns until the data actually binds - measured any earlier,
+            // this floor was being computed against zero columns and silently doing nothing.
+            UiKit.SetMinimumColumnWidths(grid);
 
             var bottom = new Panel { Dock = DockStyle.Bottom, Height = 52, BackColor = Color.White };
 
@@ -64,6 +77,31 @@ namespace ERP_Project1
             Controls.Add(heading);
 
             CancelButton = close;
+        }
+
+        /// <summary>
+        /// Shows a detail grid built from the shape of the rows themselves.
+        ///
+        /// The columns come from the row type's own properties, humanised - so a caller passes
+        /// a list of anonymous objects and gets a readable grid, rather than writing a column
+        /// definition per field for what is a throwaway popup. Where a screen needs control
+        /// over the columns, the constructor taking a configure callback is still there.
+        /// </summary>
+        public static void Show(
+            IWin32Window owner, string title, string? footer, System.Collections.IList rows)
+        {
+            using var dialog = new ListDialog(title, rows, grid =>
+            {
+                grid.AutoGenerateColumns = true;
+                UiKit.HumaniseColumns(grid);
+            }, footer);
+
+            dialog.ShowDialog(owner);
+        }
+
+        private void InitializeComponent()
+        {
+
         }
     }
 }

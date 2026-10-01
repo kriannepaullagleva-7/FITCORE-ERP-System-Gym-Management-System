@@ -56,6 +56,13 @@ namespace ERP_api.Infrastructure
                 claims.Add(new Claim(FitCoreClaims.EmployeeId, employeeId.ToString()));
             }
 
+            // Only present when the account is actually bound to a branch. Its absence is what
+            // tells the branch middleware that this caller may choose one for themselves.
+            if (user.BranchId is int branchId)
+            {
+                claims.Add(new Claim(FitCoreClaims.BranchId, branchId.ToString()));
+            }
+
             foreach (var module in user.Modules)
             {
                 claims.Add(new Claim(FitCoreClaims.Module, module));

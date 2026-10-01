@@ -50,13 +50,33 @@ namespace ERP_api.DTOs
         public bool IsActive { get; set; } = true;
     }
 
-    public class StockMovementRequestDto
+    public class StockInRequestDto
     {
         [Range(0.0001, 10000000, ErrorMessage = "Quantity must be greater than zero.")]
         public decimal Quantity { get; set; }
 
+        [Range(1, int.MaxValue, ErrorMessage = "A supplier must be selected.")]
+        public int SupplierId { get; set; }
+
         [StringLength(60)]
         public string Reference { get; set; } = "";
+
+        [StringLength(300)]
+        public string Notes { get; set; } = "";
+
+        /// <summary>Optional: the member of staff recording the movement.</summary>
+        public int? RecordedByEmployeeId { get; set; }
+    }
+
+    public class StockOutRequestDto
+    {
+        [Range(0.0001, 10000000, ErrorMessage = "Quantity must be greater than zero.")]
+        public decimal Quantity { get; set; }
+
+        /// <summary>One of SALE, DAMAGED, USED, REMOVED, ADJUSTMENT.</summary>
+        [Required(ErrorMessage = "A reason is required.")]
+        [StringLength(20)]
+        public string Reason { get; set; } = "";
 
         [StringLength(300)]
         public string Notes { get; set; } = "";

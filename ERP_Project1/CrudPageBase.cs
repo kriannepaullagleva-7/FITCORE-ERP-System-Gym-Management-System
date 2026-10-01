@@ -22,6 +22,7 @@ namespace ERP_Project1
         private readonly Button _delete;
         private readonly Button _refresh;
         private readonly string _noun;
+        private readonly List<Button> _rowActions = new();
 
         private bool _columnsReady;
 
@@ -34,7 +35,13 @@ namespace ERP_Project1
             _delete = UiKit.Action("Delete", ButtonTone.Secondary, async (_, _) => await DeleteClicked(), 86);
             _edit = UiKit.Action("Edit", ButtonTone.Secondary, async (_, _) => await EditClicked(), 76);
             _refresh = UiKit.Action("Refresh", ButtonTone.Secondary, async (_, _) => await LoadAsync(), 90);
-            _add = UiKit.Action($"+  Add {noun}", ButtonTone.Primary, async (_, _) => await AddClicked(), 146);
+
+            // Sized to its own label rather than a fixed guess: "Add subscription" and
+            // "Add pay run" are not the same width as "Add plan", and a fixed width either
+            // clips the longer ones or leaves the shorter ones swimming in padding.
+            var addLabel = $"+  Add {noun}";
+            var addWidth = Math.Max(120, TextRenderer.MeasureText(addLabel, UiTheme.BodyStrong).Width + 34);
+            _add = UiKit.Action(addLabel, ButtonTone.Primary, async (_, _) => await AddClicked(), addWidth);
 
             if (SupportsDelete) Toolbar.Controls.Add(_delete);
             if (SupportsEdit) Toolbar.Controls.Add(_edit);
@@ -99,7 +106,16 @@ namespace ERP_Project1
             await GuardAsync(async () =>
             {
                 var data = await FetchAsync();
-                if (data is null) return;
+                if (data is null)
+                {
+                    // FetchAsync's own Unwrap(...) call has already put the server's message on
+                    // the status strip; showing it here too, in place of the grid, is what tells
+                    // the operator this is a failed load rather than a tenant with nothing in it.
+                    ShowErrorState($"Unable to load {_noun}s",
+                        LastErrorMessage ?? "Something went wrong. Please try again.",
+                        async (_, _) => await LoadAsync());
+                    return;
+                }
 
                 Items = data;
 
@@ -179,12 +195,33 @@ namespace ERP_Project1
             UpdateButtons();
         }
 
+        /// <summary>
+        /// A toolbar action that acts on the selected row, and is therefore greyed out while
+        /// there is no row to act on. The alternative - leaving it live and answering the click
+        /// with "select something first" - makes the operator press a button to be told they
+        /// should not have pressed it.
+        /// </summary>
+        protected Button AddRowAction(string text, ButtonTone tone, Func<Task> run, int width = 104)
+        {
+            var button = AddAction(text, tone, run, width);
+            button.Enabled = false;
+            _rowActions.Add(button);
+            return button;
+        }
+
         private void UpdateButtons()
         {
             var has = Selected is not null;
             if (SupportsEdit) _edit.Enabled = has && !IsBusy;
             if (SupportsDelete) _delete.Enabled = has && !IsBusy;
+
+            foreach (var action in _rowActions) action.Enabled = has && !IsBusy;
+
+            OnSelectionChanged();
         }
+
+        /// <summary>Hook for a screen whose toolbar wording depends on the selected row.</summary>
+        protected virtual void OnSelectionChanged() { }
 
         protected override void SetToolbarEnabled(bool enabled)
         {
@@ -243,7 +280,7 @@ namespace ERP_Project1
 
             if (!UiKit.ConfirmDelete(this,
                     $"Are you sure you want to delete {DescribeForDelete(item)}?",
-                    DeleteConsequence))
+                    DeleteConsequence, $"Delete {Sentence(_noun)}"))
             {
                 return;
             }
@@ -268,7 +305,21 @@ namespace ERP_Project1
 
         // ---- column helpers -------------------------------------------------------
 
-        protected void Column(string property, string header, int fill = 100,
+        /// <summary>
+        /// The narrowest a column is allowed to shrink to before the grid gives up equal
+        /// distribution and shows a horizontal scrollbar instead.
+        ///
+        /// <see cref="DataGridViewAutoSizeColumnsMode.Fill"/> otherwise squeezes every column
+        /// to fit whatever width is available, which on a narrow window means a header like
+        /// "Allowances" is clipped to three letters. Measuring the header text against the
+        /// header font this grid actually uses is what keeps a caption legible at any size -
+        /// the column stops shrinking once its own header no longer fits, and the grid's
+        /// built-in scrollbar (already enabled) takes over from there.
+        /// </summary>
+        private static int MinimumWidthFor(string header) =>
+            Math.Max(52, TextRenderer.MeasureText(header, UiTheme.Overline).Width + 26);
+
+        protected DataGridViewTextBoxColumn Column(string property, string header, int fill = 100,
                               string? format = null, bool rightAlign = false)
         {
             var col = new DataGridViewTextBoxColumn
@@ -277,6 +328,7 @@ namespace ERP_Project1
                 DataPropertyName = property,
                 HeaderText = header,
                 FillWeight = fill,
+                MinimumWidth = MinimumWidthFor(header),
                 SortMode = DataGridViewColumnSortMode.Automatic
             };
 
@@ -284,18 +336,32 @@ namespace ERP_Project1
             if (rightAlign) col.DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleRight;
 
             Grid.Columns.Add(col);
+            return col;
         }
 
-        protected void MoneyColumn(string property, string header, int fill = 80) =>
-            Column(property, header, fill, "N2", rightAlign: true);
+        /// <summary>A six-figure amount with thousands separators, e.g. "999,999.99" - the
+        /// floor a money column needs regardless of how short its header is.</summary>
+        private static readonly int MoneyMinimumWidth =
+            TextRenderer.MeasureText("999,999.99", UiTheme.Body).Width + 20;
+
+        protected void MoneyColumn(string property, string header, int fill = 80)
+        {
+            var col = Column(property, header, fill, "N2", rightAlign: true);
+            col.MinimumWidth = Math.Max(col.MinimumWidth, MoneyMinimumWidth);
+        }
 
         protected void DateColumn(string property, string header, int fill = 80) =>
             Column(property, header, fill, "d MMM yyyy");
 
+        /// <summary>The longest status word this application actually shows in a pill.</summary>
+        private static readonly int StatusMinimumWidth =
+            TextRenderer.MeasureText("Partially Paid", UiTheme.Overline).Width + 30;
+
         /// <summary>A column whose values are drawn as coloured status pills.</summary>
         protected void StatusColumn(string property, string header, int fill = 80)
         {
-            Column(property, header, fill);
+            var col = Column(property, header, fill);
+            col.MinimumWidth = Math.Max(col.MinimumWidth, StatusMinimumWidth);
             UiKit.PaintStatusColumns(Grid, property);
         }
 
@@ -307,7 +373,13 @@ namespace ERP_Project1
                 Name = property,
                 DataPropertyName = property,
                 HeaderText = header,
-                FillWeight = fill
+                FillWeight = fill,
+
+                // "Inactive" is the longer of the two words this column ever shows, so the
+                // pill has room for it regardless of how short the header itself is.
+                MinimumWidth = Math.Max(
+                    MinimumWidthFor(header),
+                    TextRenderer.MeasureText("Inactive", UiTheme.Overline).Width + 30)
             };
             Grid.Columns.Add(col);
 

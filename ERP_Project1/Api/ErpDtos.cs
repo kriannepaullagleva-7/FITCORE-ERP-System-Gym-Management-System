@@ -58,8 +58,22 @@ namespace ERP_Project1.Api
         public decimal QuantityOnHand { get; set; }
         public decimal ReorderLevel { get; set; }
         public string StockStatus { get; set; } = "";
+
+        /// <summary>
+        /// Weighted average cost, and the unit cost of the most recent receipt. The server
+        /// sends both; they were previously dropped here for want of a property to land in,
+        /// which left the Valuation screen unable to show what the stock is actually worth
+        /// holding rather than what it would sell for.
+        /// </summary>
+        public decimal AverageCost { get; set; }
+        public decimal LastUnitCost { get; set; }
+
         public decimal StockValue { get; set; }
         public decimal RetailValue { get; set; }
+
+        /// <summary>Retail value less stock value: the margin still sitting on the shelf.</summary>
+        public decimal PotentialMargin { get; set; }
+
         public DateTime LastUpdatedAt { get; set; }
     }
 
@@ -87,15 +101,28 @@ namespace ERP_Project1.Api
         public decimal BalanceAfter { get; set; }
         public string Reference { get; set; } = "";
         public string Notes { get; set; } = "";
+        public int? SupplierId { get; set; }
+        public string SupplierName { get; set; } = "";
         public int? RecordedByEmployeeId { get; set; }
         public string RecordedByName { get; set; } = "";
+        public int? PerformedByUserId { get; set; }
+        public string PerformedBy { get; set; } = "";
         public DateTime MovementDate { get; set; }
     }
 
-    public class StockMovementRequestDto
+    public class StockInRequestDto
     {
         public decimal Quantity { get; set; }
+        public int SupplierId { get; set; }
         public string Reference { get; set; } = "";
+        public string Notes { get; set; } = "";
+        public int? RecordedByEmployeeId { get; set; }
+    }
+
+    public class StockOutRequestDto
+    {
+        public decimal Quantity { get; set; }
+        public string Reason { get; set; } = "";
         public string Notes { get; set; } = "";
         public int? RecordedByEmployeeId { get; set; }
     }
@@ -117,7 +144,9 @@ namespace ERP_Project1.Api
     public class SubscriptionDto
     {
         public int SubscriptionId { get; set; }
-        public int MemberId { get; set; }
+        public int? MemberId { get; set; }
+        public string? WalkInName { get; set; }
+        public string? WalkInPhone { get; set; }
         public int PlanId { get; set; }
         public DateTime StartDate { get; set; }
         public DateTime EndDate { get; set; }
@@ -126,7 +155,9 @@ namespace ERP_Project1.Api
 
     public class CreateSubscriptionDto
     {
-        public int MemberId { get; set; }
+        public int? MemberId { get; set; }
+        public string? WalkInName { get; set; }
+        public string? WalkInPhone { get; set; }
         public int PlanId { get; set; }
         public DateTime? StartDate { get; set; }
     }
@@ -136,9 +167,10 @@ namespace ERP_Project1.Api
     public class PaymentViewDto
     {
         public int PaymentId { get; set; }
-        public int MemberId { get; set; }
+        public int? MemberId { get; set; }
+        public string? WalkInName { get; set; }
 
-        /// <summary>The member's real name. Used on receipts and detail views.</summary>
+        /// <summary>The member's real name, or the walk-in's name. Used on receipts and detail views.</summary>
         public string MemberName { get; set; } = "";
 
         /// <summary>
@@ -164,6 +196,9 @@ namespace ERP_Project1.Api
         /// <summary>The signed-in user who took the money.</summary>
         public int? ProcessedByUserId { get; set; }
         public string ProcessedBy { get; set; } = "";
+
+        public decimal? AmountTendered { get; set; }
+        public decimal? ChangeGiven { get; set; }
     }
 
     public class PaymentMethodTotalDto
@@ -192,7 +227,8 @@ namespace ERP_Project1.Api
 
     public class RecordPaymentDto
     {
-        public int MemberId { get; set; }
+        public int? MemberId { get; set; }
+        public string? WalkInName { get; set; }
         public int? SubscriptionId { get; set; }
         public int? SaleId { get; set; }
         public decimal Amount { get; set; }
@@ -201,6 +237,7 @@ namespace ERP_Project1.Api
         public string ReferenceNo { get; set; } = "";
         public string Status { get; set; } = "Completed";
         public string Notes { get; set; } = "";
+        public decimal? AmountTendered { get; set; }
     }
 
     public class UpdatePaymentDto
@@ -211,6 +248,7 @@ namespace ERP_Project1.Api
         public string ReferenceNo { get; set; } = "";
         public string Status { get; set; } = "Completed";
         public string Notes { get; set; } = "";
+        public decimal? AmountTendered { get; set; }
     }
 
     public class UpdatePaymentStatusDto
@@ -228,7 +266,7 @@ namespace ERP_Project1.Api
     public class SaleViewDto
     {
         public int SaleId { get; set; }
-        public int MemberId { get; set; }
+        public int? MemberId { get; set; }
         public string MemberName { get; set; } = "";
         public DateTime SaleDate { get; set; }
         public int ItemCount { get; set; }
@@ -239,10 +277,17 @@ namespace ERP_Project1.Api
         public string Status { get; set; } = "";
         public int? CashierEmployeeId { get; set; }
         public string CashierName { get; set; } = "";
+
+        /// <summary>The signed-in user who completed the sale.</summary>
+        public int? ProcessedByUserId { get; set; }
+        public string ProcessedBy { get; set; } = "";
+
         public string Notes { get; set; } = "";
         public decimal AmountPaid { get; set; }
         public decimal Balance { get; set; }
         public string PaymentStatus { get; set; } = "";
+        public decimal? AmountTendered { get; set; }
+        public decimal? ChangeGiven { get; set; }
     }
 
     public class SaleLineDto
@@ -275,11 +320,22 @@ namespace ERP_Project1.Api
 
     public class CreateSaleDto
     {
-        public int MemberId { get; set; }
+        public int? MemberId { get; set; }
+        public string? WalkInName { get; set; }
         public List<CreateSaleItemDto> Items { get; set; } = new();
         public decimal Discount { get; set; }
         public int? CashierEmployeeId { get; set; }
         public string Notes { get; set; } = "";
+
+        /// <summary>
+        /// Settle the sale in full as part of the same server-side transaction. The till
+        /// sets this instead of posting a second payment request, so a completed sale and
+        /// its money can never end up out of step with each other.
+        /// </summary>
+        public bool SettleNow { get; set; }
+
+        public string PaymentMethod { get; set; } = "Cash";
+        public decimal? AmountTendered { get; set; }
     }
 
     public class CancelSaleDto
@@ -290,13 +346,22 @@ namespace ERP_Project1.Api
     public class SaleDto
     {
         public int SaleId { get; set; }
-        public int MemberId { get; set; }
+        public int? MemberId { get; set; }
+        public string? WalkInName { get; set; }
         public DateTime SaleDate { get; set; }
         public decimal Subtotal { get; set; }
         public decimal Discount { get; set; }
         public decimal TotalAmount { get; set; }
         public string Status { get; set; } = "";
+        public int? CashierEmployeeId { get; set; }
+
+        /// <summary>The signed-in user who completed the sale, taken from the token.</summary>
+        public int? ProcessedByUserId { get; set; }
+        public string ProcessedBy { get; set; } = "";
+
         public string Notes { get; set; } = "";
+        public decimal? AmountTendered { get; set; }
+        public decimal? ChangeGiven { get; set; }
     }
 
     // ------------------------------------------------------------------ Employees
@@ -314,6 +379,7 @@ namespace ERP_Project1.Api
         public string Email { get; set; } = "";
         public DateTime HireDate { get; set; }
         public decimal BasicSalary { get; set; }
+        public decimal HourlyRate { get; set; }
         public string Status { get; set; } = "";
     }
 
@@ -328,11 +394,21 @@ namespace ERP_Project1.Api
         public string Email { get; set; } = "";
         public DateTime HireDate { get; set; } = DateTime.UtcNow.Date;
         public decimal BasicSalary { get; set; }
+        public decimal HourlyRate { get; set; }
     }
 
     public class UpdateEmployeeDto : CreateEmployeeDto
     {
         public string Status { get; set; } = "Active";
+    }
+
+    /// <summary>What happened when an employee was given a FitCore sign-in.</summary>
+    public class EmployeeAccountResultDto
+    {
+        /// <summary>Created, AlreadyExisted, Skipped or Failed.</summary>
+        public string Outcome { get; set; } = "";
+        public string Message { get; set; } = "";
+        public bool AccountUsable { get; set; }
     }
 
     // ------------------------------------------------------------------ Payroll
@@ -348,14 +424,50 @@ namespace ERP_Project1.Api
         public DateTime PeriodEnd { get; set; }
         public decimal BasicSalary { get; set; }
         public decimal Allowances { get; set; }
-        public decimal Deductions { get; set; }
+
+        public decimal RegularHours { get; set; }
+        public decimal HourlyRate { get; set; }
+        public decimal RegularPay { get; set; }
+
         public decimal OvertimeHours { get; set; }
         public decimal OvertimeRate { get; set; }
         public decimal OvertimePay { get; set; }
+
         public decimal GrossPay { get; set; }
+
+        public decimal SssDeduction { get; set; }
+        public decimal PhilHealthDeduction { get; set; }
+        public decimal PagIbigDeduction { get; set; }
+        public decimal WithholdingTax { get; set; }
+        public decimal OtherDeductions { get; set; }
+        public decimal Deductions { get; set; }
+
         public decimal NetPay { get; set; }
+
+        // The employer's own statutory contributions. Never deducted from anybody and never
+        // shown on a payslip as a reduction - they are a cost on top of gross pay, which is
+        // why the true cost of employing this person is GrossPay + EmployerContributions.
+        public decimal SssEmployerShare { get; set; }
+        public decimal PhilHealthEmployerShare { get; set; }
+        public decimal PagIbigEmployerShare { get; set; }
+        public decimal EmployerContributions { get; set; }
+        public decimal TotalEmploymentCost { get; set; }
+
         public string Status { get; set; } = "";
         public DateTime? PaidDate { get; set; }
+
+        /// <summary>Set once the run has been approved, the step before it is paid.</summary>
+        public DateTime? ApprovedAt { get; set; }
+        public string ApprovedBy { get; set; } = "";
+
+        /// <summary>The signed-in user who created the run. Named on the payslip.</summary>
+        public int? ProcessedByUserId { get; set; }
+        public string ProcessedBy { get; set; } = "";
+
+        /// <summary>Set only once the run has been edited after it was created.</summary>
+        public int? LastModifiedByUserId { get; set; }
+        public string LastModifiedBy { get; set; } = "";
+
         public string Notes { get; set; } = "";
     }
 
@@ -407,19 +519,128 @@ namespace ERP_Project1.Api
         public string Status { get; set; } = "Draft";
     }
 
+    /// <summary>
+    /// Generates a run from recorded attendance rather than typed hours. Regular/overtime
+    /// hours, the hourly rate and the statutory deductions are all derived server-side.
+    /// </summary>
+    public class GeneratePayrollDto
+    {
+        public int EmployeeId { get; set; }
+        public DateTime PeriodStart { get; set; } = DateTime.UtcNow.Date;
+        public DateTime PeriodEnd { get; set; } = DateTime.UtcNow.Date;
+        public decimal Allowances { get; set; }
+        public decimal OtherDeductions { get; set; }
+        public string Notes { get; set; } = "";
+    }
+
+    // ------------------------------------------------------------------ Attendance
+
+    public class AttendanceDto
+    {
+        public int AttendanceId { get; set; }
+        public int EmployeeId { get; set; }
+        public string EmployeeCode { get; set; } = "";
+        public string EmployeeName { get; set; } = "";
+        public string Position { get; set; } = "";
+        public DateTime Date { get; set; }
+        public DateTime? TimeIn { get; set; }
+        public DateTime? TimeOut { get; set; }
+        public decimal RegularHours { get; set; }
+        public decimal OvertimeHours { get; set; }
+        public string Status { get; set; } = "Present";
+        public string Notes { get; set; } = "";
+        public int? RecordedByUserId { get; set; }
+        public string RecordedBy { get; set; } = "";
+        public int? ModifiedByUserId { get; set; }
+        public string ModifiedBy { get; set; } = "";
+    }
+
+    public class CreateAttendanceDto
+    {
+        public int EmployeeId { get; set; }
+        public DateTime Date { get; set; } = DateTime.UtcNow.Date;
+        public DateTime? TimeIn { get; set; }
+        public DateTime? TimeOut { get; set; }
+        public string Status { get; set; } = "Present";
+        public string Notes { get; set; } = "";
+    }
+
+    public class UpdateAttendanceDto : CreateAttendanceDto
+    {
+    }
+
+    public class AttendancePeriodSummaryDto
+    {
+        public int EmployeeId { get; set; }
+        public string EmployeeName { get; set; } = "";
+        public DateTime PeriodStart { get; set; }
+        public DateTime PeriodEnd { get; set; }
+        public int DaysPresent { get; set; }
+        public int DaysAbsent { get; set; }
+        public int DaysLate { get; set; }
+        public int DaysOnLeave { get; set; }
+        public decimal TotalRegularHours { get; set; }
+        public decimal TotalOvertimeHours { get; set; }
+    }
+
+    // ------------------------------------------------------------------ Audit
+
+    public class AuditEventDto
+    {
+        public long AuditEventId { get; set; }
+        public DateTime OccurredAt { get; set; }
+        public string Username { get; set; } = "";
+        public string RoleKey { get; set; } = "";
+        public string Action { get; set; } = "";
+        public string Module { get; set; } = "";
+        public string EntityName { get; set; } = "";
+        public string? EntityId { get; set; }
+        public string? OldValues { get; set; }
+        public string? NewValues { get; set; }
+        public string? Summary { get; set; }
+
+        /// <summary>Where the request came from. Shown on the Security screen.</summary>
+        public string? IpAddress { get; set; }
+    }
+
     // ------------------------------------------------------------------ Expenses
 
     public class ExpenseDto
     {
         public int ExpenseId { get; set; }
         public string Category { get; set; } = "";
+
+        /// <summary>The broad grouping the income statement shows, derived from the category.</summary>
+        public string CategoryGroup { get; set; } = "";
+
         public string Description { get; set; } = "";
         public decimal Amount { get; set; }
         public DateTime ExpenseDate { get; set; }
         public string PaymentMethod { get; set; } = "";
         public string ReferenceNo { get; set; } = "";
+
+        /// <summary>Paid or Unpaid. An unpaid expense is money owed and sits in payables.</summary>
+        public string Status { get; set; } = "";
+
+        public string PaidTo { get; set; } = "";
+        public int? SupplierId { get; set; }
+        public string SupplierName { get; set; } = "";
+
+        /// <summary>The ledger account it posted to.</summary>
+        public int? AccountId { get; set; }
+        public string AccountName { get; set; } = "";
+
+        public int? BankAccountId { get; set; }
+        public string BankAccountName { get; set; } = "";
+
         public int? RecordedByEmployeeId { get; set; }
         public string RecordedByName { get; set; } = "";
+        public string RecordedBy { get; set; } = "";
+
+        /// <summary>Set once the expense has reached the ledger.</summary>
+        public int? JournalEntryId { get; set; }
+
+        public DateTime CreatedAt { get; set; }
     }
 
     public class ExpenseCategoryTotalDto
@@ -434,7 +655,17 @@ namespace ERP_Project1.Api
         public int Count { get; set; }
         public decimal Total { get; set; }
         public decimal ThisMonth { get; set; }
+
+        /// <summary>Recorded but not yet settled. Part of what the gym owes.</summary>
+        public decimal Unpaid { get; set; }
+        public int UnpaidCount { get; set; }
+
         public List<ExpenseCategoryTotalDto> ByCategory { get; set; } = new();
+
+        /// <summary>The same totals rolled up to the groups the income statement shows.</summary>
+        public List<CategorySliceDto> ByGroup { get; set; } = new();
+
+        public List<TrendPointDto> ByMonth { get; set; } = new();
     }
 
     public class CreateExpenseDto
@@ -446,17 +677,35 @@ namespace ERP_Project1.Api
         public string PaymentMethod { get; set; } = "Cash";
         public string ReferenceNo { get; set; } = "";
         public int? RecordedByEmployeeId { get; set; }
+
+        /// <summary>Paid or Unpaid. Unpaid puts it in accounts payable until it is settled.</summary>
+        public string Status { get; set; } = "Paid";
+
+        public string PaidTo { get; set; } = "";
+        public int? SupplierId { get; set; }
+
+        /// <summary>Null lets the category decide which ledger account it posts to.</summary>
+        public int? AccountId { get; set; }
+
+        public int? BankAccountId { get; set; }
     }
 
     public class UpdateExpenseDto : CreateExpenseDto
     {
     }
 
+    /// <summary>Settles an expense that was recorded as owed.</summary>
+    public class SettleExpenseDto
+    {
+        public string PaymentMethod { get; set; } = "Cash";
+        public int? BankAccountId { get; set; }
+    }
+
     // ------------------------------------------------------------------ Membership overview
 
     public class MembershipOverviewDto
     {
-        public int MemberId { get; set; }
+        public int? MemberId { get; set; }
         public string FirstName { get; set; } = "";
         public string LastName { get; set; } = "";
         public string FullName { get; set; } = "";
@@ -526,34 +775,8 @@ namespace ERP_Project1.Api
     }
 
     // ----------------------------------------------------------------------------------
-    // Customers and Suppliers - tenant master data behind /api/customers and /api/suppliers.
+    // Suppliers - tenant master data behind /api/suppliers.
     // ----------------------------------------------------------------------------------
-
-    public class CustomerDto
-    {
-        public int CustomerId { get; set; }
-        public string CustomerCode { get; set; } = "";
-        public string CustomerName { get; set; } = "";
-        public string? ContactNumber { get; set; }
-        public string? EmailAddress { get; set; }
-        public string? Address { get; set; }
-        public bool IsActive { get; set; }
-        public DateTime CreatedAt { get; set; }
-    }
-
-    public class CreateCustomerDto
-    {
-        public string CustomerCode { get; set; } = "";
-        public string CustomerName { get; set; } = "";
-        public string? ContactNumber { get; set; }
-        public string? EmailAddress { get; set; }
-        public string? Address { get; set; }
-    }
-
-    public class UpdateCustomerDto : CreateCustomerDto
-    {
-        public bool IsActive { get; set; } = true;
-    }
 
     public class SupplierDto
     {

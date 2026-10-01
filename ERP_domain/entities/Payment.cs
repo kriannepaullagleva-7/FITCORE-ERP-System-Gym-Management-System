@@ -2,16 +2,24 @@ using System;
 
 namespace ERP_domain.entities
 {
-    public class Payment : IAuditable
+    public class Payment : IAuditable, IBranchScoped
     {
         public int PaymentId { get; set; }
 
-        // A payment always belongs to a member. It optionally settles a specific subscription
-        // (membership dues) or a specific sale (goods); a standalone member payment leaves
-        // both null. A payment never settles a subscription and a sale at the same time.
-        public int MemberId { get; set; }
+        /// <summary>The branch that took this payment. Null on a single-site tenant.</summary>
+        public int? BranchId { get; set; }
+
+        // A payment usually belongs to a member, but a walk-in payment - one taken from
+        // somebody with no Member record - leaves this null and carries WalkInName instead.
+        // It optionally settles a specific subscription (membership dues) or a specific sale
+        // (goods); a standalone payment leaves both null. A payment never settles a
+        // subscription and a sale at the same time.
+        public int? MemberId { get; set; }
         public int? SubscriptionId { get; set; }
         public int? SaleId { get; set; }
+
+        /// <summary>The payer's name, used only when <see cref="MemberId"/> is null.</summary>
+        public string? WalkInName { get; set; }
 
         /// <summary>
         /// What kind of transaction this money settles: <c>Membership</c>, <c>Sales</c> or
@@ -45,8 +53,21 @@ namespace ERP_domain.entities
         /// <summary>Stamped by the DbContext whenever this record is changed.</summary>
         public DateTime? UpdatedAt { get; set; }
 
+        /// <summary>
+        /// Cash handed over by the payer. Set only when <see cref="Method"/> is Cash; null for
+        /// every other method, where the amount paid is definitionally the amount due.
+        /// </summary>
+        public decimal? AmountTendered { get; set; }
+
+        /// <summary>
+        /// <see cref="AmountTendered"/> minus <see cref="Amount"/>, computed server-side and
+        /// never accepted from a caller - the same trust boundary payroll's net pay already
+        /// uses. Null whenever <see cref="AmountTendered"/> is null.
+        /// </summary>
+        public decimal? ChangeGiven { get; set; }
+
         // Foreign keys
-        public Member Member { get; set; } = null!;
+        public Member? Member { get; set; }
         public Subscription? Subscription { get; set; }
         public Sale? Sale { get; set; }
     }

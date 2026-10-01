@@ -21,6 +21,12 @@ namespace ERP_Project1.Api
     /// </summary>
     public sealed class FitCoreSession : IApiFailureSink
     {
+        /// <summary>
+        /// The branch picker's header. Named here and read by the server's branch middleware;
+        /// the server ignores it for any account that is not entitled to select a branch.
+        /// </summary>
+        public const string BranchHeaderName = "X-Branch-Id";
+
         private readonly HttpClient _http;
         private bool _signalledExpiry;
 
@@ -55,11 +61,25 @@ namespace ERP_Project1.Api
             Payments = new PaymentApiService(_http, this);
             Products = new ProductApiService(_http, this);
             Inventory = new InventoryApiService(_http, this);
-            Customers = new CustomerApiService(_http, this);
             Suppliers = new SupplierApiService(_http, this);
             Employees = new EmployeeApiService(_http, this);
             Payroll = new PayrollApiService(_http, this);
+            Attendance = new AttendanceApiService(_http, this);
             Reports = new ReportsApiService(_http, this);
+            Audit = new AuditApiService(_http, this);
+            Integrity = new DataIntegrityApiService(_http, this);
+
+            Expenses = new ExpenseApiService(_http, this);
+            Finance = new FinanceApiService(_http, this);
+            Analytics = new AnalyticsApiService(_http, this);
+            Purchases = new PurchaseApiService(_http, this);
+            Returns = new SaleReturnApiService(_http, this);
+            Leave = new LeaveApiService(_http, this);
+            Notes = new MemberNoteApiService(_http, this);
+            Settings = new SettingsApiService(_http, this);
+            Users = new UserAccessApiService(_http, this);
+            Platform = new PlatformApiService(_http, this);
+            Branches = new BranchApiService(_http, this);
         }
 
         public string ApiBaseUrl => _http.BaseAddress!.ToString();
@@ -84,11 +104,63 @@ namespace ERP_Project1.Api
         public PaymentApiService Payments { get; }
         public ProductApiService Products { get; }
         public InventoryApiService Inventory { get; }
-        public CustomerApiService Customers { get; }
         public SupplierApiService Suppliers { get; }
         public EmployeeApiService Employees { get; }
         public PayrollApiService Payroll { get; }
+        public AttendanceApiService Attendance { get; }
         public ReportsApiService Reports { get; }
+        public AuditApiService Audit { get; }
+        public DataIntegrityApiService Integrity { get; }
+
+        // Finance Management, Business Intelligence and the rest of the nine-module surface.
+        public ExpenseApiService Expenses { get; }
+        public FinanceApiService Finance { get; }
+        public AnalyticsApiService Analytics { get; }
+        public PurchaseApiService Purchases { get; }
+        public SaleReturnApiService Returns { get; }
+        public LeaveApiService Leave { get; }
+        public MemberNoteApiService Notes { get; }
+        public SettingsApiService Settings { get; }
+        public UserAccessApiService Users { get; }
+
+        /// <summary>
+        /// Platform administration. Present on every session because the client holds no
+        /// authorization logic of its own; every call behind it is refused by the server unless
+        /// the signed-in account is the Super Admin.
+        /// </summary>
+        public PlatformApiService Platform { get; }
+
+        /// <summary>The company's branches, and the branch-to-branch comparison behind them.</summary>
+        public BranchApiService Branches { get; }
+
+        /// <summary>
+        /// The branch every request is currently scoped to, or null for the whole company.
+        ///
+        /// Selecting one adds the X-Branch-Id header to every subsequent call, which the server
+        /// validates against this company's own branches before it narrows anything. It is a
+        /// request for a scope rather than the scope itself: an account bound to a branch is
+        /// narrowed by its token and the header is ignored entirely.
+        /// </summary>
+        public int? SelectedBranchId { get; private set; }
+
+        /// <summary>Raised when the operator switches branch, so open screens can reload.</summary>
+        public event Action? BranchChanged;
+
+        public void SelectBranch(int? branchId)
+        {
+            if (SelectedBranchId == branchId) return;
+
+            SelectedBranchId = branchId;
+
+            _http.DefaultRequestHeaders.Remove(BranchHeaderName);
+
+            if (branchId is int id)
+            {
+                _http.DefaultRequestHeaders.Add(BranchHeaderName, id.ToString());
+            }
+
+            BranchChanged?.Invoke();
+        }
 
         /// <summary>
         /// Whether this user holds a module. Presentation only - it decides which navigation

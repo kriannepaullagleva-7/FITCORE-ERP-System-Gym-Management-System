@@ -1,0 +1,19 @@
+=== Companies to delete ===
+CompanyId|CompanyCode|CompanyName|EnterpriseTier|IsActive|CreatedAt
+---------|-----------|-----------|--------------|--------|---------
+1|COMP001|FitCore Gym - Medium Enterprise (reserved)|3|1|2026-09-03 09:15:00.0000000
+5|COMP01|FitCore Gym - Micro Enterprise|1|1|2026-09-21 14:00:48.1988822
+6|COMP02|FitCore Gym - Small Enterprise|2|1|2026-09-21 14:00:51.0055392
+=== CompanyDatabases to delete ===
+CompanyDatabaseId|CompanyId|ServerName|DatabaseName|CredentialKey|IsActive
+-----------------|---------|----------|------------|-------------|--------
+1|1|db66559.public.databaseasp.net|db66559||0
+2|1|db66559.public.databaseasp.net|db66559||0
+3|1|db68521.public.databaseasp.net|db68521|FitcoreCredential|1
+6|5|db68433.public.databaseasp.net|db68433|TenantA|1
+7|6|db68484.public.databaseasp.net|db68484|TenantB|1
+=== Devices to delete ===
+DeviceId|CompanyId|DeviceCode|DeviceName|IsActive|CreatedAt
+--------|---------|----------|----------|--------|---------
+3E63FF15-F311-4287-8745-08DF1316C743|1|DEV001|Main PC|1|2026-09-03 09:50:00.0000000
+C581E5F4-A8DE-4241-38B3-08DF1318F34A|1|DEV002| Gaming PC|1|2026-09-15 09:50:00.0000000

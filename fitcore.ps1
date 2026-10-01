@@ -3,8 +3,8 @@
 #   .\fitcore.ps1 stop      stop any running FitCore process
 #   .\fitcore.ps1 build     stop, then clean, restore and build the solution
 #   .\fitcore.ps1 rebuild   as build, but also removes bin/obj first
-#   .\fitcore.ps1 db        show migration state for master and both tenants
-#   .\fitcore.ps1 update    apply pending migrations to master and both tenants
+#   .\fitcore.ps1 db        show migration state for the master and all three tenants
+#   .\fitcore.ps1 update    apply pending migrations to the master and all three tenants
 #   .\fitcore.ps1 api       start ERP_api (https://localhost:7214)
 #   .\fitcore.ps1 ui        start ERP_winforms
 #   .\fitcore.ps1 run       stop, build, start the API, wait for it, start the desktop client
@@ -151,14 +151,18 @@ function Invoke-Build([switch]$Hard) {
 # ---------------------------------------------------------------------------- database
 
 <#
-    One tenant schema, three databases. TENANT_ERP_CONNECTION_NAME selects which tenant the
-    design-time factory resolves; left unset it means Tenant A. The factory prints the target
-    before doing anything, which is the line to read before applying anything.
+    One tenant schema, three tenant databases plus the master. TENANT_ERP_CONNECTION_NAME selects
+    which tenant the design-time factory resolves; left unset it means Tenant A. The factory
+    prints the target before doing anything, which is the line to read before applying anything.
+
+    A tenant missing from this list is a tenant that silently never gets migrated, so adding a
+    database means adding it here.
 #>
 $Targets = @(
-    @{ Name = 'master        '; Context = 'MasterErpDbContext'; Connection = $null },
-    @{ Name = 'tenant A micro'; Context = 'TenantErpDbContext'; Connection = $null },
-    @{ Name = 'tenant B small'; Context = 'TenantErpDbContext'; Connection = 'TenantErpB' }
+    @{ Name = 'master         '; Context = 'MasterErpDbContext'; Connection = $null },
+    @{ Name = 'tenant A micro '; Context = 'TenantErpDbContext'; Connection = $null },
+    @{ Name = 'tenant B small '; Context = 'TenantErpDbContext'; Connection = 'TenantErpB' },
+    @{ Name = 'tenant C medium'; Context = 'TenantErpDbContext'; Connection = 'TenantErpC' }
 )
 
 function Invoke-Ef([string]$verb, [hashtable]$target) {
@@ -198,7 +202,7 @@ function Update-Database {
             ForEach-Object { Write-Note $_ }
         if ($LASTEXITCODE -ne 0) { throw "database update failed for $($t.Name.Trim())" }
     }
-    Write-Ok 'all three databases are up to date'
+    Write-Ok 'the master and all three tenant databases are up to date'
 }
 
 # ---------------------------------------------------------------------------- run

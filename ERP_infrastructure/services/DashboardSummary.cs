@@ -18,6 +18,12 @@ namespace ERP_infrastructure.services
         public int ActiveSubscriptions { get; set; }
         public int ExpiringSoon { get; set; }
         public int ExpiredSubscriptions { get; set; }
+
+        /// <summary>Active subscriptions whose end date is today or within the next N days.</summary>
+        public int ExpiringWithin1Day { get; set; }
+        public int ExpiringWithin3Days { get; set; }
+        public int ExpiringWithin7Days { get; set; }
+
         public int TotalPlans { get; set; }
 
         // ---------------------------------------------------------------- Inventory
@@ -51,6 +57,9 @@ namespace ERP_infrastructure.services
         public int ActiveEmployees { get; set; }
         public decimal PayrollThisMonth { get; set; }
         public decimal PayrollOutstanding { get; set; }
+
+        /// <summary>Runs generated but not yet Approved or Paid.</summary>
+        public int DraftPayrollRuns { get; set; }
         public decimal ExpensesThisMonth { get; set; }
         public decimal ExpensesTotal { get; set; }
 

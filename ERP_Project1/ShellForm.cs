@@ -6,17 +6,23 @@ namespace ERP_Project1
     /// <summary>
     /// The FitCore desktop shell: branded sidebar, topbar and a content host.
     ///
-    /// The sidebar lists the modules the signed-in user actually holds, so a Micro tenant
-    /// never sees Employees or Payroll - and when a Small tenant does see them, they sit in
-    /// OPERATIONS beside Membership, Payments, Sales and Inventory, because for that tenant
-    /// they are ordinary day-to-day work rather than a bolt-on.
+    /// The sidebar lists the nine FitCore business modules - Membership, Payment, Sales,
+    /// Inventory, Employee, Payroll, Finance, System Administration and Business Intelligence -
+    /// and nothing else. Everything the product does sits underneath one of them as a tab, so
+    /// the sidebar stays the shape of the business rather than growing an entry per screen.
+    ///
+    /// Two independent narrowings decide what is drawn. A module appears only if the signed-in
+    /// user holds it, which the tier and their role together decide; and a tab inside it
+    /// appears only if they hold that subfeature, which is how one catalogue serves a Micro
+    /// gym's four screens and a Medium tenant's general ledger. Both lists arrive from the
+    /// server on <c>/api/auth/me</c> - the desktop holds no copy of the licensing rules.
     ///
     /// All of that is presentation. Every screen behind it calls ERP_api, which re-checks and
     /// answers 403 regardless of what was drawn here.
     /// </summary>
     internal sealed class ShellForm : Form
     {
-        /// <summary>A module in the sidebar, and the submodules it opens onto.</summary>
+        /// <summary>A module in the sidebar, and the subfeatures it opens onto.</summary>
         private sealed record ModuleEntry(
             string Key,
             string Label,
@@ -38,9 +44,12 @@ namespace ERP_Project1
 
         private Label _crumb = null!;
         private Label _crumbHint = null!;
+        private ComboBox _branchPicker = null!;
+        private Label _branchLabel = null!;
         private ModuleWorkspace? _current;
         private string? _currentKey;
         private bool _expiryHandled;
+        private bool _switchingBranch;
 
         public ShellForm(FitCoreSession session)
         {
@@ -84,9 +93,11 @@ namespace ERP_Project1
             base.OnShown(e);
 
             // Permissions are re-read from the server on open, so a module withdrawn by an
-            // administrator since the token was minted is reflected immediately.
+            // administrator since the token was minted is reflected immediately - and so is a
+            // tier change, which moves whole groups of tabs.
             await _session.RefreshCurrentUserAsync();
             BuildSidebar();
+            await RefreshBranchPickerAsync();
 
             if (_session.CurrentUser?.MustChangePassword == true)
             {
@@ -95,7 +106,7 @@ namespace ERP_Project1
 
             var first = Catalogue()
                 .SelectMany(g => g.Modules)
-                .FirstOrDefault(m => _session.Can(m.RequiredModule));
+                .FirstOrDefault(m => _session.Can(m.RequiredModule) && m.Tabs(this).Length > 0);
 
             if (first is null)
             {
@@ -109,86 +120,337 @@ namespace ERP_Project1
         // ------------------------------------------------------------------ catalogue
 
         /// <summary>
-        /// The navigation, exactly as the tiers define it.
+        /// The navigation: exactly the nine modules, in the order the business runs.
         ///
-        /// Employees and Payroll are listed inside OPERATIONS rather than in a group of their
-        /// own: whether they appear at all is the tier's decision, but once they do they are
-        /// peers of the other four operational modules.
+        /// Membership brings people in; payments and sales take their money; inventory supplies
+        /// the goods; employees and payroll run the staff; finance records the consequences;
+        /// system administration controls who may do any of it; and business intelligence
+        /// reports on all of it.
+        ///
+        /// Every tab names the subfeature it belongs to and is drawn only if the server said
+        /// the signed-in user may open it. That is what lets the same catalogue serve all three
+        /// tiers: a Micro gym sees four tabs under Business Intelligence' one, a Medium tenant
+        /// sees ten, and neither list is written twice.
         /// </summary>
-        private NavGroup[] Catalogue() => new[]
+        private NavGroup[] Catalogue() =>
+            _session.CurrentUser?.IsPlatformAdministrator == true
+                ? PlatformCatalogue()
+                : TenantCatalogue();
+
+        /// <summary>
+        /// The Super Admin's panel: Dashboard, Subscription, System Administration and Business
+        /// Intelligence, and nothing else.
+        ///
+        /// These are not four new modules - there are still exactly nine, and every entry here
+        /// names one of them in <c>RequiredModule</c> and opens onto subfeatures that already
+        /// exist. What changes is only how they are grouped for an account whose workspace is
+        /// the platform rather than a gym: the platform dashboard and the subscription book are
+        /// the two things a platform operator opens most, so they get their own entries instead
+        /// of being buried as the fifth tab of something else.
+        ///
+        /// The seven operational modules are absent because the platform company is not a gym.
+        /// It has no members, no stock and no till, and drawing Membership for the Super Admin
+        /// would offer a screen that can only report that the platform has no members.
+        /// Branch administration is absent for a different reason: a branch belongs to a
+        /// tenant's own company, so it stays with that tenant's Admin/Owner.
+        /// </summary>
+        private NavGroup[] PlatformCatalogue() => new[]
         {
-            new NavGroup("MAIN", new[]
+            new NavGroup("PLATFORM", new[]
             {
-                new ModuleEntry("dashboard", "Dashboard", "◆", Modules.Dashboard,
-                    "Dashboard", "Today's figures for your gym, straight from the tenant database.",
-                    s => new[]
-                    {
-                        new WorkspaceTab("overview", "Overview",
-                            () => new DashboardPage(s._session, s.DashboardActionAsync))
-                    })
+                new ModuleEntry("platformDashboard", "Dashboard", "◉", Modules.BusinessIntelligence,
+                    "Platform Dashboard",
+                    "Tenants, subscriptions, accounts and activity across the installation.",
+                    s => s.Tabs(
+                        (Submodules.PlatformDashboard, "dashboard", "Dashboard",
+                            () => new AnalyticsPage(s._session, "Platform Dashboard",
+                                "Tenants, subscriptions, accounts and activity across the installation.",
+                                s._session.Platform.GetDashboardAsync)))),
+
+                new ModuleEntry("platformSubscription", "Subscription", "▦", Modules.SystemAdmin,
+                    "Subscription Management",
+                    "The plans FitCore sells, and which tier each tenant is licensed for.",
+                    s => s.Tabs(
+                        (Submodules.PlatformPlans, "plans", "Plans",
+                            () => new SubscriptionPlansPage(s._session)),
+                        (Submodules.PlatformSubscriptions, "subscriptions", "Subscriptions & Tiers",
+                            () => new PlatformSubscriptionsPage(s._session))))
             }),
 
-            new NavGroup("OPERATIONS", new[]
+            new NavGroup("SYSTEM", new[]
             {
-                new ModuleEntry("membership", "Membership", "●", Modules.Membership,
-                    "Membership", "Manage members, plans and subscriptions.",
-                    s => new[]
-                    {
-                        new WorkspaceTab("members", "Members", () => new MembersPage(s._session)),
-                        new WorkspaceTab("plans", "Membership Plans", () => new PlansPage(s._session)),
-                        new WorkspaceTab("subscriptions", "Subscriptions", () => new SubscriptionsPage(s._session))
-                    }),
-
-                new ModuleEntry("payments", "Payments", "▮", Modules.Payments,
-                    "Payments", "Record what has been received and track what is still owed.",
-                    s => new[]
-                    {
-                        new WorkspaceTab("transactions", "Payment Transactions", () => new PaymentsPage(s._session))
-                    }),
-
-                new ModuleEntry("sales", "Sales", "▲", Modules.Sales,
-                    "Sales", "Ring up a sale, review the day's transactions and keep customer records.",
-                    s => new[]
-                    {
-                        new WorkspaceTab("pos", "New Sale", () => new PosPage(s._session)),
-                        new WorkspaceTab("history", "Sales History", () => new SalesPage(s._session)),
-                        new WorkspaceTab("customers", "Customers", () => new CustomersPage(s._session))
-                    }),
-
-                new ModuleEntry("inventory", "Inventory", "▣", Modules.Inventory,
-                    "Inventory", "Products, stock on hand and the suppliers you buy from.",
-                    s => new[]
-                    {
-                        new WorkspaceTab("products", "Products", () => new ProductsPage(s._session)),
-                        new WorkspaceTab("stock", "Stock", () => new InventoryPage(s._session)),
-                        new WorkspaceTab("suppliers", "Suppliers", () => new SuppliersPage(s._session))
-                    }),
-
-                new ModuleEntry("employees", "Employees", "◍", Modules.Employees,
-                    "Employees", "Your staff, and the salary payroll is calculated from.",
-                    s => new[]
-                    {
-                        new WorkspaceTab("records", "Employee Records", () => new EmployeesPage(s._session))
-                    }),
-
-                new ModuleEntry("payroll", "Payroll", "◈", Modules.Payroll,
-                    "Payroll", "Pay runs, with gross and net calculated by the server.",
-                    s => new[]
-                    {
-                        new WorkspaceTab("records", "Payroll Records", () => new PayrollPage(s._session))
-                    })
+                new ModuleEntry("systemadmin", "Administration", "⚙", Modules.SystemAdmin,
+                    "System Administration",
+                    "The tenants themselves, the accounts across them, and the platform trail.",
+                    s => s.Tabs(
+                        (Submodules.PlatformTenants, "tenants", "Tenants",
+                            () => new TenantsPage(s._session)),
+                        (Submodules.PlatformUsers, "platformUsers", "Platform Users",
+                            () => new PlatformUsersPage(s._session)),
+                        (Submodules.PlatformSettings, "platformSettings", "Platform Settings",
+                            () => new SettingsPage(s._session, "Platform Settings",
+                                "Configuration that applies to the whole installation.",
+                                s._session.Platform.GetSettingsAsync,
+                                s._session.Platform.UpdateSettingsAsync)),
+                        (Submodules.PlatformAudit, "platformAudit", "Platform Audit",
+                            () => new PlatformAuditPage(s._session)),
+                        (Submodules.PlatformMonitoring, "monitoring", "Monitoring",
+                            () => new PlatformHealthPage(s._session))))
             }),
 
             new NavGroup("INSIGHT", new[]
             {
-                new ModuleEntry("reports", "Reports", "▤", Modules.Reports,
-                    "Reports", "Sales, payments, inventory and membership, filtered by date.",
-                    s => new[]
-                    {
-                        new WorkspaceTab("reports", "Reports", () => new ReportsPage(s._session))
-                    })
+                new ModuleEntry("businessintelligence", "Intelligence", "▤", Modules.BusinessIntelligence,
+                    "Business Intelligence",
+                    "Company growth, tier mix, subscription revenue and usage across the platform.",
+                    s => s.Tabs(
+                        (Submodules.PlatformAnalytics, "platformAnalytics", "Platform Analytics",
+                            () => new AnalyticsPage(s._session, "Platform Analytics",
+                                "Company growth, tier mix, subscription revenue and usage.",
+                                s._session.Platform.GetAnalyticsAsync))))
             })
         };
+
+        private NavGroup[] TenantCatalogue() => new[]
+        {
+            new NavGroup("OPERATIONS", new[]
+            {
+                new ModuleEntry("membership", "Membership", "●", Modules.Membership,
+                    "Membership Management",
+                    "Members, plans, subscriptions and the history behind each one.",
+                    s => s.Tabs(
+                        (Submodules.Members, "members", "Members",
+                            () => new MembersPage(s._session)),
+                        (Submodules.MembershipPlans, "plans", "Membership Plans",
+                            () => new PlansPage(s._session)),
+                        (Submodules.Subscriptions, "subscriptions", "Subscriptions",
+                            () => new SubscriptionsPage(s._session)),
+                        (Submodules.MemberHistory, "history", "History",
+                            () => new MemberHistoryPage(s._session)),
+                        (Submodules.MembershipReports, "reports", "Reports",
+                            () => new ReportsPage(s._session, "Membership Reports",
+                                "Joins, renewals, expiries and membership revenue.",
+                                ReportKind.Membership)))),
+
+                new ModuleEntry("payments", "Payments", "▮", Modules.Payments,
+                    "Payment Management",
+                    "Record what has been received, and see what is still owed.",
+                    s => s.Tabs(
+                        (Submodules.PaymentTransactions, "transactions", "Payment Transactions",
+                            () => new PaymentsPage(s._session)),
+                        (Submodules.Receivables, "outstanding", "Outstanding",
+                            () => new ReceivablesPage(s._session)),
+                        (Submodules.PaymentReconciliation, "reconciliation", "Reconciliation",
+                            () => new PaymentReconciliationPage(s._session)),
+                        (Submodules.PaymentReports, "reports", "Reports",
+                            () => new ReportsPage(s._session, "Payment Reports",
+                                "Collections by day, method and category.",
+                                ReportKind.Payments)))),
+
+                new ModuleEntry("sales", "Sales", "▲", Modules.Sales,
+                    "Sales Management",
+                    "Ring up a sale, review the day's takings and handle returns - independent " +
+                    "of Membership, so a sale never has to name a member or a customer record.",
+                    s => s.Tabs(
+                        (Submodules.PointOfSale, "pos", "New Sale",
+                            () => new PosPage(s._session)),
+                        (Submodules.SalesHistory, "history", "Sales History",
+                            () => new SalesPage(s._session)),
+                        (Submodules.SalesReturns, "returns", "Returns & Refunds",
+                            () => new ReturnsPage(s._session)),
+                        (Submodules.SalesReports, "reports", "Reports",
+                            () => new ReportsPage(s._session, "Sales Reports",
+                                "Revenue, units, top products and margin.",
+                                ReportKind.Sales)))),
+
+                new ModuleEntry("inventory", "Inventory", "▣", Modules.Inventory,
+                    "Inventory Management",
+                    "Products, stock on hand, the suppliers you buy from and the orders you place.",
+                    s => s.Tabs(
+                        (Submodules.Products, "products", "Products",
+                            () => new ProductsPage(s._session)),
+                        (Submodules.Stock, "stock", "Stock",
+                            () => new InventoryPage(s._session)),
+                        (Submodules.Purchases, "purchases", "Purchases",
+                            () => new PurchasesPage(s._session)),
+                        (Submodules.Suppliers, "suppliers", "Suppliers",
+                            () => new SuppliersPage(s._session)),
+                        (Submodules.StockMovements, "movements", "Stock Movements",
+                            () => new StockMovementsPage(s._session)),
+                        (Submodules.InventoryValuation, "valuation", "Valuation",
+                            () => new ValuationPage(s._session)),
+                        (Submodules.InventoryReports, "reports", "Reports",
+                            () => new ReportsPage(s._session, "Inventory Reports",
+                                "Low stock, movement and value by category.",
+                                ReportKind.Inventory)))),
+
+                new ModuleEntry("employees", "Employees", "◍", Modules.Employees,
+                    "Employee Management",
+                    "Your staff, their attendance and their leave.",
+                    s => s.Tabs(
+                        (Submodules.EmployeeRecords, "records", "Employee Records",
+                            () => new EmployeeRecordsPage(s._session)),
+                        (Submodules.Attendance, "attendance", "Attendance",
+                            () => new AttendancePage(s._session)),
+                        (Submodules.Leave, "leave", "Leave",
+                            () => new LeavePage(s._session)),
+                        (Submodules.EmployeeReports, "reports", "Reports",
+                            () => new ReportsPage(s._session, "Employee Reports",
+                                "Headcount, attendance rate and overtime by employee.",
+                                ReportKind.Employees)))),
+
+                new ModuleEntry("payroll", "Payroll", "◈", Modules.Payroll,
+                    "Payroll Management",
+                    "Pay runs generated from attendance, with gross, deductions and net calculated by the server.",
+                    s => s.Tabs(
+                        (Submodules.PayrollRecords, "records", "Payroll Records",
+                            () => new PayrollRecordsPage(s._session)),
+                        (Submodules.PayrollAttendance, "summary", "Attendance Summary",
+                            () => new AttendanceSummaryPage(s._session)),
+                        (Submodules.PayrollCalculation, "calculation", "Payroll Calculation",
+                            () => new PayrollCalculationPage(s._session)),
+                        (Submodules.Payslips, "payslips", "Payslips",
+                            () => new PayslipsPage(s._session)),
+                        (Submodules.PayrollHistory, "history", "Payroll History",
+                            () => new PayrollHistoryPage(s._session)),
+                        (Submodules.PayrollReports, "reports", "Reports",
+                            () => new ReportsPage(s._session, "Payroll Reports",
+                                "Salary cost, overtime and statutory contributions by period.",
+                                ReportKind.Payroll))))
+            }),
+
+            new NavGroup("FINANCE", new[]
+            {
+                new ModuleEntry("finance", "Finance", "₱", Modules.Finance,
+                    "Finance Management",
+                    "The books: expenses, the ledger, what is owed either way, and the statements.",
+                    s => s.Tabs(
+                        (Submodules.FinanceOverview, "overview", "Overview",
+                            () => new FinanceOverviewPage(s._session)),
+                        (Submodules.Expenses, "expenses", "Expenses",
+                            () => new ExpensesPage(s._session)),
+                        (Submodules.ChartOfAccounts, "accounts", "Chart of Accounts",
+                            () => new ChartOfAccountsPage(s._session)),
+                        (Submodules.JournalEntries, "journal", "Journal Entries",
+                            () => new JournalPage(s._session)),
+                        (Submodules.GeneralLedger, "ledger", "General Ledger",
+                            () => new GeneralLedgerPage(s._session)),
+                        (Submodules.AccountsReceivable, "receivable", "Receivable",
+                            () => new ReceivablesPage(s._session)),
+                        (Submodules.AccountsPayable, "payable", "Payable",
+                            () => new PayablesPage(s._session)),
+                        (Submodules.Banking, "banking", "Cash & Bank",
+                            () => new BankAccountsPage(s._session)),
+                        (Submodules.BankReconciliation, "reconciliation", "Reconciliation",
+                            () => new ReconciliationPage(s._session)),
+                        (Submodules.Budgets, "budgets", "Budgets",
+                            () => new BudgetsPage(s._session)),
+                        (Submodules.FinancialPeriods, "periods", "Periods",
+                            () => new FinancialPeriodsPage(s._session)),
+                        (Submodules.FinancialReports, "reports", "Financial Reports",
+                            () => new FinancialReportsPage(s._session))))
+            }),
+
+            new NavGroup("SYSTEM", new[]
+            {
+                new ModuleEntry("systemadmin", "Administration", "⚙", Modules.SystemAdmin,
+                    "System Administration",
+                    "Accounts, roles, settings, the audit trail - and, for the platform account, the tenants themselves.",
+                    s => s.Tabs(
+                        (Submodules.Users, "users", "Users",
+                            () => new UsersPage(s._session)),
+                        (Submodules.Roles, "roles", "Roles",
+                            () => new RolesPage(s._session)),
+                        (Submodules.Permissions, "permissions", "Permissions",
+                            () => new PermissionsPage(s._session)),
+
+                        // Branching. Medium and Admin only, so for every other account this tab
+                        // simply is not drawn - and the endpoints behind it refuse regardless.
+                        (Submodules.Branches, "branches", "Branches",
+                            () => new BranchesPage(s._session)),
+
+                        (Submodules.Settings, "settings", "Settings",
+                            () => new SettingsPage(s._session)),
+                        (Submodules.AuditLogs, "audit", "Audit Logs",
+                            () => new AuditHistoryPage(s._session)),
+                        (Submodules.Security, "security", "Security",
+                            () => new SecurityPage(s._session)),
+                        (Submodules.DataIntegrity, "integrity", "Data Integrity",
+                            () => new DataIntegrityPage(s._session))))
+
+                // The six platform subfeatures are not listed here. They belong to the Super
+                // Admin, whose sidebar is PlatformCatalogue() above, so a copy of them in the
+                // tenant catalogue would be drawn for nobody.
+            }),
+
+            new NavGroup("INSIGHT", new[]
+            {
+                new ModuleEntry("businessintelligence", "Intelligence", "▤", Modules.BusinessIntelligence,
+                    "Business Intelligence",
+                    "The dashboard, the reports, and the analytics behind every module.",
+                    s => s.Tabs(
+                        (Submodules.ExecutiveDashboard, "dashboard", "Dashboard",
+                            () => new DashboardPage(s._session, s.DashboardActionAsync)),
+                        (Submodules.OperationalReports, "reports", "Reports",
+                            () => new ReportsPage(s._session)),
+
+                        (Submodules.KpiDashboard, "kpi", "KPIs",
+                            () => new AnalyticsPage(s._session, "Key Performance Indicators",
+                                "Every figure FitCore measures, across all nine modules.",
+                                s._session.Analytics.GetKpiDashboardAsync)),
+
+                        (Submodules.MembershipAnalytics, "membership", "Membership",
+                            () => s.Area("membership", "Membership Analytics",
+                                "Growth, retention, renewals and plan mix.")),
+                        (Submodules.SalesAnalytics, "sales", "Sales",
+                            () => s.Area("sales", "Sales Analytics",
+                                "Revenue, basket size, product mix and growth.")),
+                        (Submodules.PaymentAnalytics, "payments", "Payments",
+                            () => s.Area("payments", "Payment Analytics",
+                                "Collection rate, method mix and what is still owed.")),
+                        (Submodules.InventoryAnalytics, "inventory", "Inventory",
+                            () => s.Area("inventory", "Inventory Analytics",
+                                "Value, movement, turnover and stock risk.")),
+                        (Submodules.WorkforceAnalytics, "workforce", "Workforce",
+                            () => s.Area("workforce", "Workforce Analytics",
+                                "Headcount, attendance, overtime and payroll cost.")),
+                        (Submodules.FinanceAnalytics, "finance", "Finance",
+                            () => s.Area("finance", "Finance Analytics",
+                                "Revenue, expenses, cash flow and net income over time.")),
+                        (Submodules.ProfitabilityAnalytics, "profitability", "Profitability",
+                            () => s.Area("profitability", "Profitability",
+                                "Gross margin, cost of goods sold and net margin.")),
+
+                        // The company beside each of its branches. Unaffected by the branch
+                        // picker on purpose - a comparison that only showed one branch would
+                        // not be one.
+                        (Submodules.BranchPerformance, "branches", "Branch Performance",
+                            () => new BranchPerformancePage(s._session))))
+            })
+        };
+
+        /// <summary>
+        /// Keeps only the tabs this user may open.
+        ///
+        /// The server decides: it sends the list of permitted subfeatures with the signed-in
+        /// user, so the desktop is filtering against an answer rather than working one out.
+        /// That is what stops the client holding a second, drifting copy of the tier rules.
+        /// </summary>
+        private WorkspaceTab[] Tabs(
+            params (string Submodule, string Key, string Label, Func<ModulePageBase> Create)[] tabs)
+        {
+            var user = _session.CurrentUser;
+
+            return tabs
+                .Where(t => user?.CanUse(t.Submodule) == true)
+                .Select(t => new WorkspaceTab(t.Key, t.Label, t.Create))
+                .ToArray();
+        }
+
+        /// <summary>One Business Intelligence area, rendered by the shared analytics screen.</summary>
+        private AnalyticsPage Area(string area, string title, string subtitle) =>
+            new(_session, title, subtitle,
+                (from, to) => _session.Analytics.GetAreaAsync(area, from, to));
 
         private ModuleEntry? Find(string key) =>
             Catalogue().SelectMany(g => g.Modules)
@@ -216,8 +478,15 @@ namespace ERP_Project1
 
             foreach (var group in Catalogue())
             {
-                var permitted = group.Modules.Where(m => _session.Can(m.RequiredModule)).ToArray();
-                if (permitted.Length == 0) continue;   // the whole group is above this tier
+                // A module with no reachable tab is not drawn at all. That is the case for a
+                // Manager and System Administration on a Micro tenant: they hold the module by
+                // role, but every subfeature inside it is Admin-only, so an entry that opened
+                // onto nothing would be worse than no entry.
+                var permitted = group.Modules
+                    .Where(m => _session.Can(m.RequiredModule) && m.Tabs(this).Length > 0)
+                    .ToArray();
+
+                if (permitted.Length == 0) continue;
 
                 stack.Controls.Add(GroupLabel(group.Title));
 
@@ -289,18 +558,23 @@ namespace ERP_Project1
                 UseMnemonic = false
             });
 
-            var tier = (_session.CurrentUser?.EnterpriseTier ?? "").ToUpperInvariant();
+            // The platform account gets its own chip rather than a tier. A Super Admin is not
+            // on a plan - they administer the plans - and labelling them "MEDIUM" would suggest
+            // they are one of the tenants.
+            var chipText = _session.CurrentUser?.IsPlatformAdministrator == true
+                ? "PLATFORM"
+                : (_session.CurrentUser?.EnterpriseTier ?? "").ToUpperInvariant();
 
-            if (!string.IsNullOrWhiteSpace(tier))
+            if (!string.IsNullOrWhiteSpace(chipText))
             {
                 var chip = new Label
                 {
-                    Text = tier,
+                    Text = chipText,
                     Font = new Font(UiTheme.FamilySemibold, 7F),
                     ForeColor = Color.White,
                     AutoSize = false,
-                    Size = new Size(58, 20),
-                    Location = new Point(SidebarWidth - 80, 30),
+                    Size = new Size(66, 20),
+                    Location = new Point(SidebarWidth - 88, 30),
                     TextAlign = ContentAlignment.MiddleCenter,
                     BackColor = Color.Transparent,
                     UseMnemonic = false
@@ -442,23 +716,133 @@ namespace ERP_Project1
                     TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
             };
 
+            // The branch picker. Drawn only for an account the server would actually honour it
+            // for - the Admin/Owner of a Medium tenant - because for anybody else the header is
+            // ignored and a control that appears to do nothing is worse than no control.
+            _branchLabel = new Label
+            {
+                Text = "Branch",
+                Font = UiTheme.Small,
+                ForeColor = UiTheme.TextMuted,
+                AutoSize = true,
+                Visible = false,
+                UseMnemonic = false
+            };
+
+            _branchPicker = new ComboBox
+            {
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                Font = UiTheme.Body,
+                Width = 210,
+                Visible = false,
+                DisplayMember = "Value",
+                ValueMember = "Key"
+            };
+
+            _branchPicker.SelectedIndexChanged += async (_, _) => await OnBranchPickedAsync();
+
             void Reflow()
             {
                 avatar.Location = new Point(bar.Width - 62, 14);
                 identity.Location = new Point(bar.Width - 74 - identity.Width, 14);
                 role.Location = new Point(bar.Width - 74 - role.Width, 34);
+
+                var pickerRight = bar.Width - 74 - Math.Max(identity.Width, role.Width) - 24;
+                _branchPicker.Location = new Point(pickerRight - _branchPicker.Width, 30);
+                _branchLabel.Location = new Point(pickerRight - _branchPicker.Width, 12);
             }
 
             bar.Resize += (_, _) => Reflow();
 
             bar.Controls.Add(_crumb);
             bar.Controls.Add(_crumbHint);
+            bar.Controls.Add(_branchLabel);
+            bar.Controls.Add(_branchPicker);
             bar.Controls.Add(identity);
             bar.Controls.Add(role);
             bar.Controls.Add(avatar);
 
             Reflow();
             return bar;
+        }
+
+        /// <summary>
+        /// Fills the branch picker for an Admin/Owner of a branched company.
+        ///
+        /// "All branches" is the first entry and the default: an owner opening the application
+        /// should see the whole company, not whichever branch happens to sort first. The list
+        /// comes from the server, and the server re-checks the chosen branch on every request
+        /// that carries it - this control only asks.
+        /// </summary>
+        private async Task RefreshBranchPickerAsync()
+        {
+            var user = _session.CurrentUser;
+
+            if (user?.CanManageBranches != true)
+            {
+                _branchPicker.Visible = false;
+                _branchLabel.Visible = false;
+                return;
+            }
+
+            var branches = (await _session.Branches.GetAllAsync(includeInactive: false)).Value;
+
+            // A Medium tenant that has not created any branches yet is a single-site company in
+            // practice, so there is nothing to pick between.
+            if (branches is null || branches.Count == 0)
+            {
+                _branchPicker.Visible = false;
+                _branchLabel.Visible = false;
+                return;
+            }
+
+            var entries = new List<KeyValuePair<int, string>> { new(0, "All branches") };
+            entries.AddRange(branches.Select(b => new KeyValuePair<int, string>(b.BranchId, b.Name)));
+
+            _switchingBranch = true;
+            try
+            {
+                _branchPicker.DataSource = entries;
+                _branchPicker.SelectedValue = _session.SelectedBranchId ?? 0;
+            }
+            finally
+            {
+                _switchingBranch = false;
+            }
+
+            _branchPicker.Visible = true;
+            _branchLabel.Visible = true;
+        }
+
+        /// <summary>
+        /// Switches branch and rebuilds every open screen.
+        ///
+        /// The workspaces are discarded rather than told to reload: each one caches the rows it
+        /// last fetched, and those rows belong to the branch that was selected when they were
+        /// read. Rebuilding is what guarantees no screen is left showing another branch's data.
+        /// </summary>
+        private async Task OnBranchPickedAsync()
+        {
+            if (_switchingBranch) return;
+            if (_branchPicker.SelectedValue is not int chosen) return;
+
+            var branchId = chosen > 0 ? chosen : (int?)null;
+            if (_session.SelectedBranchId == branchId) return;
+
+            _session.SelectBranch(branchId);
+
+            foreach (var workspace in _workspaces.Values) workspace.Dispose();
+            _workspaces.Clear();
+            _current = null;
+
+            var key = _currentKey;
+            _currentKey = null;
+
+            if (key is not null) await NavigateAsync(key);
+
+            _crumbHint.Text = branchId is null
+                ? "Showing every branch"
+                : $"Showing {_branchPicker.Text}";
         }
 
         // ------------------------------------------------------------------ navigation
@@ -478,7 +862,18 @@ namespace ERP_Project1
 
             if (!_workspaces.TryGetValue(entry.Key, out var workspace))
             {
-                workspace = new ModuleWorkspace(entry.Tabs(this));
+                var tabs = entry.Tabs(this);
+
+                if (tabs.Length == 0)
+                {
+                    UiKit.Info(
+                        $"Your account holds {entry.Title} but none of the screens inside it. " +
+                        "Ask an administrator if you need one of them.",
+                        entry.Title);
+                    return;
+                }
+
+                workspace = new ModuleWorkspace(tabs);
                 workspace.NavigationRequested += async (m, t) => await NavigateAsync(m, t);
                 _workspaces[entry.Key] = workspace;
             }

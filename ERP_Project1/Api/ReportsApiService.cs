@@ -38,6 +38,17 @@ namespace ERP_Project1.Api
         public Task<ApiResult<ExpenseReportDto>> GetExpenseReportAsync(DateTime? from, DateTime? to) =>
             SendAsync<ExpenseReportDto>(() => Http.GetAsync(Range("expenses", from, to)));
 
+        public Task<ApiResult<EmployeeReportDto>> GetEmployeeReportAsync(DateTime? from, DateTime? to) =>
+            SendAsync<EmployeeReportDto>(() => Http.GetAsync(Range("employees", from, to)));
+
+        public Task<ApiResult<PayrollReportDto>> GetPayrollReportAsync(DateTime? from, DateTime? to) =>
+            SendAsync<PayrollReportDto>(() => Http.GetAsync(Range("payroll", from, to)));
+
+        public Task<ApiResult<PaymentReconciliationDto>> GetPaymentReconciliationAsync(
+            DateTime? from, DateTime? to) =>
+            SendAsync<PaymentReconciliationDto>(
+                () => Http.GetAsync(Range("payment-reconciliation", from, to)));
+
         private static string Range(string report, DateTime? from, DateTime? to) =>
             QueryString.Build(
                 $"{BasePath}/{report}",

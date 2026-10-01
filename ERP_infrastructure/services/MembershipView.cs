@@ -6,7 +6,8 @@ namespace ERP_infrastructure.services
     // derived membership state the Membership module displays.
     public class MembershipView
     {
-        public int MemberId { get; set; }
+        /// <summary>Null for a walk-in membership, which has no Member row behind it.</summary>
+        public int? MemberId { get; set; }
         public string FirstName { get; set; } = string.Empty;
         public string LastName { get; set; } = string.Empty;
         public string FullName => $"{FirstName} {LastName}".Trim();

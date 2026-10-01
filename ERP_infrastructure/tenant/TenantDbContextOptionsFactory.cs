@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using ERP_infrastructure.data;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Logging;
 
 namespace ERP_infrastructure.tenant
@@ -52,6 +53,13 @@ namespace ERP_infrastructure.tenant
                     // warning about it on every query that includes two collections.
                     .UseSqlServer(cs, sql => sql.UseQuerySplittingBehavior(QuerySplittingBehavior.SingleQuery))
                     .UseLoggerFactory(_loggerFactory)
+                    .ConfigureWarnings(w =>
+                        // A sale line's navigation to its sale is required, and the sale is
+                        // branch-filtered, so EF warns that the navigation could come back null.
+                        // That is the intended behaviour here rather than a mistake: a line
+                        // whose sale belongs to another branch should not be reachable, and the
+                        // warning would otherwise be logged on every query in the application.
+                        w.Ignore(CoreEventId.PossibleIncorrectRequiredNavigationWithQueryFilterInteractionWarning))
                     .Options);
         }
     }

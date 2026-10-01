@@ -76,7 +76,7 @@ namespace ERP_api.Controllers
         {
             var employee = await _employeeService.CreateEmployeeAsync(
                 dto.EmployeeCode, dto.FirstName, dto.LastName, dto.Position, dto.Department,
-                dto.Phone, dto.Email, dto.HireDate, dto.BasicSalary);
+                dto.Phone, dto.Email, dto.HireDate, dto.BasicSalary, dto.HourlyRate);
 
             return CreatedAtAction(
                 nameof(GetById), new { id = employee.EmployeeId }, employee.ToDto());
@@ -91,9 +91,28 @@ namespace ERP_api.Controllers
         {
             var employee = await _employeeService.UpdateEmployeeAsync(
                 id, dto.EmployeeCode, dto.FirstName, dto.LastName, dto.Position, dto.Department,
-                dto.Phone, dto.Email, dto.HireDate, dto.BasicSalary, dto.Status);
+                dto.Phone, dto.Email, dto.HireDate, dto.BasicSalary, dto.Status, dto.HourlyRate);
 
             return employee is null ? NotFound() : Ok(employee.ToDto());
+        }
+
+        /// <summary>
+        /// Gives this employee a FitCore sign-in, using their email as the username and the
+        /// standard default password. Safe to call more than once: an account that already
+        /// exists is detected and reported rather than duplicated, which is what makes this
+        /// endpoint the retry path when the first attempt - automatic, right after Create -
+        /// could not reach the master database.
+        /// </summary>
+        [HttpPost("{id:int}/account")]
+        [ProducesResponseType(typeof(EmployeeAccountResultDto), StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status404NotFound)]
+        public async Task<ActionResult<EmployeeAccountResultDto>> EnsureAccount(int id)
+        {
+            var employee = await _employeeService.GetEmployeeByIdAsync(id);
+            if (employee is null) return NotFound();
+
+            var result = await _employeeService.EnsureAccountAsync(employee);
+            return Ok(result.ToDto());
         }
 
         [HttpDelete("{id:int}")]

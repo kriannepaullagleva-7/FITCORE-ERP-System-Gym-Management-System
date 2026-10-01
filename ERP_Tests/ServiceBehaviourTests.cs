@@ -16,7 +16,32 @@ public class ServiceBehaviourTests
         var db = new TenantDbFixture();
         var memberRepo = new MemberRepository(db.Context);
         var paymentRepo = new PaymentRepository(db.Context);
-        return (new MemberService(memberRepo, paymentRepo), db);
+        var subscriptionRepo = new SubscriptionRepository(db.Context);
+        return (new MemberService(memberRepo, paymentRepo, subscriptionRepo), db);
+    }
+
+    private static InventoryService CreateInventoryService(TenantDbFixture db)
+    {
+        var inventoryRepo = new InventoryRepository(db.Context);
+        var productRepo = new ProductRepository(db.Context);
+        var supplierRepo = new GenericRepository<Supplier>(db.Context);
+        var actor = new NullCurrentUserAccessor();
+        return new InventoryService(
+            inventoryRepo, productRepo, supplierRepo, db.Context, actor,
+            new TenantAuditService(db.Context, actor), db.Finance);
+    }
+
+    private static async Task<int> SeedSupplierAsync(TenantDbFixture db, string code = "SUP-001")
+    {
+        var supplier = new Supplier
+        {
+            SupplierCode = code,
+            SupplierName = "Test Supplier",
+            IsActive = true
+        };
+        db.Context.Suppliers.Add(supplier);
+        await db.Context.SaveChangesAsync();
+        return supplier.SupplierId;
     }
 
     [Fact]
@@ -83,8 +108,7 @@ public class ServiceBehaviourTests
     {
         using var db = new TenantDbFixture();
         var productRepo = new ProductRepository(db.Context);
-        var inventoryRepo = new InventoryRepository(db.Context);
-        var inventory = new InventoryService(inventoryRepo, productRepo, db.Context);
+        var inventory = CreateInventoryService(db);
         var products = new ProductService(productRepo, inventory, db.Context);
 
         await products.CreateProductAsync("TWL-001", "Gym Towel", "Apparel", 150m, 250m, 10m, 5m);
@@ -100,8 +124,7 @@ public class ServiceBehaviourTests
     {
         using var db = new TenantDbFixture();
         var productRepo = new ProductRepository(db.Context);
-        var inventoryRepo = new InventoryRepository(db.Context);
-        var inventory = new InventoryService(inventoryRepo, productRepo, db.Context);
+        var inventory = CreateInventoryService(db);
         var products = new ProductService(productRepo, inventory, db.Context);
 
         var product = await products.CreateProductAsync("SHK-001", "Shake", "Supplements", 120m, 180m, 20m, 5m);
@@ -118,14 +141,13 @@ public class ServiceBehaviourTests
     {
         using var db = new TenantDbFixture();
         var productRepo = new ProductRepository(db.Context);
-        var inventoryRepo = new InventoryRepository(db.Context);
-        var inventory = new InventoryService(inventoryRepo, productRepo, db.Context);
+        var inventory = CreateInventoryService(db);
         var products = new ProductService(productRepo, inventory, db.Context);
 
         var product = await products.CreateProductAsync("BTL-001", "Bottle", "Accessories", 60m, 100m, 3m, 1m);
 
         var failure = await Assert.ThrowsAnyAsync<Exception>(
-            () => inventory.StockOutAsync(product.ProductId, 10m, "REF", "too many"));
+            () => inventory.StockOutAsync(product.ProductId, 10m, "REMOVED", "too many"));
 
         Assert.Contains("stock", failure.Message, StringComparison.OrdinalIgnoreCase);
 
@@ -138,22 +160,103 @@ public class ServiceBehaviourTests
     {
         using var db = new TenantDbFixture();
         var productRepo = new ProductRepository(db.Context);
-        var inventoryRepo = new InventoryRepository(db.Context);
-        var inventory = new InventoryService(inventoryRepo, productRepo, db.Context);
+        var inventory = CreateInventoryService(db);
         var products = new ProductService(productRepo, inventory, db.Context);
+        var supplierId = await SeedSupplierAsync(db);
 
         var product = await products.CreateProductAsync("MAT-001", "Mat", "Equipment", 320m, 500m, 4m, 2m);
 
-        await inventory.StockInAsync(product.ProductId, 6m, "PO-1", "restock");
+        await inventory.StockInAsync(product.ProductId, 6m, supplierId, "PO-1", "restock");
         var afterIn = await inventory.GetByProductIdAsync(product.ProductId);
         Assert.Equal(10m, afterIn!.QuantityOnHand);
 
-        await inventory.StockOutAsync(product.ProductId, 6m, "SO-1", "sold");
+        await inventory.StockOutAsync(product.ProductId, 6m, "SALE", "sold");
         var afterOut = await inventory.GetByProductIdAsync(product.ProductId);
         Assert.Equal(4m, afterOut!.QuantityOnHand);
 
         // Every movement is recorded, including the ones that cancel out.
         var movements = await inventory.GetMovementsAsync(product.ProductId);
         Assert.True(movements.Count >= 2);
+    }
+
+    [Fact]
+    public async Task Stock_in_without_a_supplier_is_refused()
+    {
+        using var db = new TenantDbFixture();
+        var productRepo = new ProductRepository(db.Context);
+        var inventory = CreateInventoryService(db);
+        var products = new ProductService(productRepo, inventory, db.Context);
+
+        var product = await products.CreateProductAsync("YOGA-1", "Yoga Mat", "Equipment", 200m, 350m, 0m, 2m);
+
+        var failure = await Assert.ThrowsAnyAsync<Exception>(
+            () => inventory.StockInAsync(product.ProductId, 10m, supplierId: 9999, "PO-1", "restock"));
+
+        Assert.Contains("supplier", failure.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Stock_in_from_an_inactive_supplier_is_refused()
+    {
+        using var db = new TenantDbFixture();
+        var productRepo = new ProductRepository(db.Context);
+        var inventory = CreateInventoryService(db);
+        var products = new ProductService(productRepo, inventory, db.Context);
+
+        var product = await products.CreateProductAsync("YOGA-2", "Yoga Block", "Equipment", 80m, 150m, 0m, 2m);
+
+        var supplier = new Supplier
+        {
+            SupplierCode = "SUP-INACTIVE",
+            SupplierName = "Retired Supplier",
+            IsActive = false
+        };
+        db.Context.Suppliers.Add(supplier);
+        await db.Context.SaveChangesAsync();
+
+        var failure = await Assert.ThrowsAnyAsync<Exception>(
+            () => inventory.StockInAsync(product.ProductId, 5m, supplier.SupplierId, "PO-2", "restock"));
+
+        Assert.Contains("inactive", failure.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Stock_out_requires_a_reason_from_the_fixed_catalogue()
+    {
+        using var db = new TenantDbFixture();
+        var productRepo = new ProductRepository(db.Context);
+        var inventory = CreateInventoryService(db);
+        var products = new ProductService(productRepo, inventory, db.Context);
+
+        var product = await products.CreateProductAsync("YOGA-3", "Yoga Strap", "Equipment", 30m, 60m, 5m, 1m);
+
+        var failure = await Assert.ThrowsAnyAsync<Exception>(
+            () => inventory.StockOutAsync(product.ProductId, 1m, "BECAUSE", "notes"));
+
+        Assert.Contains("reason", failure.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Stock_movements_are_attributed_to_the_signed_in_user_not_the_client()
+    {
+        using var db = new TenantDbFixture();
+        var productRepo = new ProductRepository(db.Context);
+        var inventoryRepo = new InventoryRepository(db.Context);
+        var supplierRepo = new GenericRepository<Supplier>(db.Context);
+        var actor = new FakeCurrentUserAccessor(roleKey: ErpRoles.Manager);
+        var inventory = new InventoryService(
+            inventoryRepo, productRepo, supplierRepo, db.Context, actor,
+            new TenantAuditService(db.Context, actor), db.Finance);
+        var products = new ProductService(productRepo, inventory, db.Context);
+        var supplierId = await SeedSupplierAsync(db);
+
+        var product = await products.CreateProductAsync("YOGA-4", "Yoga Bag", "Accessories", 100m, 180m, 0m, 1m);
+
+        await inventory.StockInAsync(product.ProductId, 4m, supplierId, "PO-3", "restock");
+
+        var movement = (await inventory.GetMovementsAsync(product.ProductId)).First();
+
+        Assert.Equal("Test User", movement.PerformedBy);
+        Assert.Equal(supplierId, movement.SupplierId);
     }
 }

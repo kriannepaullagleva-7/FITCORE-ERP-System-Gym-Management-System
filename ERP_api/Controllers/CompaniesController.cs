@@ -17,16 +17,18 @@ namespace ERP_api.Controllers
     /// company therefore cannot read the registry of another, and nobody can reach it at all on
     /// a deployment where the flag is off.
     ///
-    /// System Administration is a Medium-tier module held by Super Admin, so on a Micro or
-    /// Small deployment this controller answers 403 to everyone. Registering and provisioning
-    /// tenants there is a deployment activity, done through the Bootstrap configuration section
-    /// rather than over HTTP.
+    /// Tenant Management is a platform subfeature of System Administration, reserved for the
+    /// Super Admin. An owner administers their own gym; only the platform account administers
+    /// the tenants themselves - so an Admin on any tier answers 403 here, and registering a
+    /// tenant on a deployment with no Super Admin stays a configuration activity through the
+    /// Bootstrap section rather than something reachable over HTTP.
     /// </summary>
     [ApiController]
     [Route("api/companies")]
     [Produces("application/json")]
     [Authorize(Roles = ErpRoles.Admin + "," + ErpRoles.SuperAdmin)]
     [RequireModule(ErpModules.SystemAdmin)]
+    [RequireSubmodule(ErpModules.Sub.PlatformTenants)]
     [CrossTenantAdmin]
     public class CompaniesController : ControllerBase
     {

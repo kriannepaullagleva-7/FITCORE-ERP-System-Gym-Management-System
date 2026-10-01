@@ -17,8 +17,15 @@ namespace ERP_api.DTOs
 
     public class RecordPaymentDto
     {
-        [Range(1, int.MaxValue, ErrorMessage = "A valid member must be selected.")]
-        public int MemberId { get; set; }
+        /// <summary>
+        /// Null for a walk-in payment - one taken from somebody with no Member record. See
+        /// <see cref="WalkInName"/>.
+        /// </summary>
+        public int? MemberId { get; set; }
+
+        /// <summary>The payer's name, used only when <see cref="MemberId"/> is null.</summary>
+        [StringLength(150)]
+        public string? WalkInName { get; set; }
 
         /// <summary>Null for a payment that is not tied to a subscription.</summary>
         public int? SubscriptionId { get; set; }
@@ -47,6 +54,10 @@ namespace ERP_api.DTOs
 
         [StringLength(300)]
         public string Notes { get; set; } = "";
+
+        /// <summary>Cash handed over, when <see cref="Method"/> is Cash.</summary>
+        [Range(0, 100000000, ErrorMessage = "Amount tendered cannot be negative.")]
+        public decimal? AmountTendered { get; set; }
     }
 
     public class UpdatePaymentDto
@@ -71,6 +82,10 @@ namespace ERP_api.DTOs
 
         [StringLength(300)]
         public string Notes { get; set; } = "";
+
+        /// <summary>Cash handed over, when <see cref="Method"/> is Cash.</summary>
+        [Range(0, 100000000, ErrorMessage = "Amount tendered cannot be negative.")]
+        public decimal? AmountTendered { get; set; }
     }
 
     public class UpdatePaymentStatusDto
@@ -90,7 +105,8 @@ namespace ERP_api.DTOs
     public class PaymentDto
     {
         public int PaymentId { get; set; }
-        public int MemberId { get; set; }
+        public int? MemberId { get; set; }
+        public string? WalkInName { get; set; }
         public int? SubscriptionId { get; set; }
         public int? SaleId { get; set; }
         public decimal Amount { get; set; }
@@ -99,5 +115,15 @@ namespace ERP_api.DTOs
         public string ReferenceNo { get; set; } = "";
         public string Status { get; set; } = "";
         public string Notes { get; set; } = "";
+
+        /// <summary>Membership, Sales or General - decided by the server.</summary>
+        public string Category { get; set; } = "";
+
+        /// <summary>The signed-in user who took the money. Named on the receipt.</summary>
+        public int? ProcessedByUserId { get; set; }
+        public string ProcessedBy { get; set; } = "";
+
+        public decimal? AmountTendered { get; set; }
+        public decimal? ChangeGiven { get; set; }
     }
 }

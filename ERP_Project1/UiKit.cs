@@ -166,6 +166,11 @@ namespace ERP_Project1
             // The card's white surface is painted, not set as BackColor - the panel itself
             // stays canvas-coloured so the rounded corners blend. Child labels must therefore
             // be transparent, or each one shows as a grey block inside the white card.
+            //
+            // Layout: the caption sits upper-left, the value is pinned lower-right - not
+            // simply stacked below the caption - so the card reads as a title over an empty
+            // field with the number anchored to the opposite corner, per the FitCore KPI
+            // layout convention.
             var caption = new Label
             {
                 Text = label.ToUpperInvariant(),
@@ -174,17 +179,7 @@ namespace ERP_Project1
                 BackColor = Color.Transparent,
                 Dock = DockStyle.Top,
                 Height = 18,
-                UseMnemonic = false
-            };
-
-            valueLabel = new Label
-            {
-                Text = "—",
-                Font = UiTheme.CardValue,
-                ForeColor = UiTheme.TextPrimary,
-                BackColor = Color.Transparent,
-                Dock = DockStyle.Top,
-                Height = 34,
+                TextAlign = ContentAlignment.TopLeft,
                 UseMnemonic = false
             };
 
@@ -195,13 +190,28 @@ namespace ERP_Project1
                 ForeColor = UiTheme.TextMuted,
                 BackColor = Color.Transparent,
                 Dock = DockStyle.Top,
-                Height = 20,
+                Height = 18,
+                TextAlign = ContentAlignment.TopLeft,
                 UseMnemonic = false
             };
 
+            valueLabel = new Label
+            {
+                Text = "—",
+                Font = UiTheme.CardValue,
+                ForeColor = UiTheme.TextPrimary,
+                BackColor = Color.Transparent,
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.BottomRight,
+                UseMnemonic = false
+            };
+
+            // Top-docked siblings stack topmost-last-added, so hint is added before caption to
+            // land caption above it; the Fill value takes whatever vertical space remains and
+            // anchors its text to that area's bottom-right corner.
             card.Controls.Add(hintLabel);
-            card.Controls.Add(valueLabel);
             card.Controls.Add(caption);
+            card.Controls.Add(valueLabel);
             return card;
         }
 
@@ -209,7 +219,7 @@ namespace ERP_Project1
 
         /// <summary>A bordered, rounded host that gives a bare TextBox a modern outline.</summary>
         public static Panel InputShell(TextBox inner, int width, int height = UiTheme.ControlHeight,
-                                       int leftPad = 10)
+                                       int leftPad = 10, int rightPad = 10)
         {
             var shell = new Panel
             {
@@ -232,9 +242,10 @@ namespace ERP_Project1
 
             // A borderless TextBox sits flush with the top of its host; nudging it down
             // centres the text inside the rounded outline. The left inset leaves room for a
-            // glyph drawn by the caller.
+            // glyph drawn by the caller, and the right inset for one too (the search box's
+            // clear button).
             var pad = Math.Max(0, (height - inner.PreferredSize.Height) / 2);
-            shell.Padding = new Padding(leftPad, pad, 10, 0);
+            shell.Padding = new Padding(leftPad, pad, rightPad, 0);
 
             inner.GotFocus += (_, _) => { focused = true; shell.Invalidate(); };
             inner.LostFocus += (_, _) => { focused = false; shell.Invalidate(); };
@@ -256,19 +267,39 @@ namespace ERP_Project1
             };
         }
 
-        /// <summary>A search field wrapped in the rounded shell, with a magnifier glyph.</summary>
+        /// <summary>A search field wrapped in the rounded shell, with a magnifier glyph and,
+        /// once there is something typed, a clear ("x") button.</summary>
         public static Panel SearchField(out TextBox box, string placeholder, int width = 300)
         {
-            box = new TextBox { PlaceholderText = placeholder };
+            var inner = new TextBox { PlaceholderText = placeholder };
+            box = inner;
 
-            // The glyph is painted rather than added as a control: a docked label would
+            // The glyphs are painted rather than added as controls: a docked label would
             // compete with the filled TextBox for the same space and clip the placeholder.
-            var shell = InputShell(box, width, leftPad: 32);
+            var shell = InputShell(inner, width, leftPad: 32, rightPad: 26);
 
             shell.Paint += (_, e) => TextRenderer.DrawText(
                 e.Graphics, "\U0001F50D", new Font(UiTheme.Family, 9F),
                 new Rectangle(9, 0, 20, shell.Height), UiTheme.TextMuted,
                 TextFormatFlags.VerticalCenter);
+
+            var clearArea = new Rectangle(width - 24, 0, 22, shell.Height);
+
+            shell.Paint += (_, e) =>
+            {
+                if (inner.Text.Length == 0) return;
+
+                TextRenderer.DrawText(e.Graphics, "✕", new Font(UiTheme.Family, 9F),
+                    clearArea, UiTheme.TextMuted,
+                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+            };
+
+            inner.TextChanged += (_, _) => shell.Invalidate();
+
+            shell.MouseUp += (_, e) =>
+            {
+                if (inner.Text.Length > 0 && clearArea.Contains(e.Location)) inner.Clear();
+            };
 
             return shell;
         }
@@ -438,6 +469,31 @@ namespace ERP_Project1
         }
 
         /// <summary>
+        /// Gives every column in a grid a floor it will not shrink below in
+        /// <see cref="DataGridViewAutoSizeColumnsMode.Fill"/> mode: at least its own header,
+        /// and a wider floor still for a column formatted as money. Applied to the grids that
+        /// build their columns directly - the POS catalogue and cart, and the read-only
+        /// detail dialogs - which is the same protection <c>CrudPageBase</c> gives every
+        /// list screen automatically, kept in one place so a resize behaves the same way
+        /// everywhere in FitCore rather than only on the screens that went through the base
+        /// class.
+        /// </summary>
+        public static void SetMinimumColumnWidths(DataGridView grid)
+        {
+            var moneyFloor = TextRenderer.MeasureText("999,999.99", UiTheme.Body).Width + 20;
+
+            foreach (DataGridViewColumn column in grid.Columns)
+            {
+                var headerFloor = TextRenderer.MeasureText(column.HeaderText, UiTheme.Overline).Width + 26;
+
+                var isMoney = (column.DefaultCellStyle.Format ?? column.InheritedStyle?.Format ?? "")
+                    .StartsWith("N", StringComparison.OrdinalIgnoreCase);
+
+                column.MinimumWidth = Math.Max(52, isMoney ? Math.Max(headerFloor, moneyFloor) : headerFloor);
+            }
+        }
+
+        /// <summary>
         /// Draws the named columns as status pills instead of plain words, so "Out of stock"
         /// and "Active" are distinguishable at a glance rather than by reading.
         /// </summary>
@@ -546,7 +602,7 @@ namespace ERP_Project1
         /// invitation rather than a blank rectangle.
         /// </summary>
         public static Panel EmptyState(string headline, string detail, string? actionText = null,
-                                       EventHandler? action = null)
+                                       EventHandler? action = null, Color? headlineColor = null)
         {
             var host = new Panel { Dock = DockStyle.Fill, BackColor = UiTheme.Surface };
 
@@ -564,7 +620,7 @@ namespace ERP_Project1
             {
                 Text = headline,
                 Font = UiTheme.SectionTitle,
-                ForeColor = UiTheme.TextPrimary,
+                ForeColor = headlineColor ?? UiTheme.TextPrimary,
                 AutoSize = true,
                 Margin = new Padding(0, 0, 0, 6),
                 UseMnemonic = false
@@ -679,6 +735,67 @@ namespace ERP_Project1
             }
         }
 
+        /// <summary>
+        /// Rejects a keystroke that could not possibly belong to a number: everything but
+        /// digits, at most one decimal separator (skipped for whole-number fields), and a
+        /// leading minus when the field is allowed to go negative. This is never the only
+        /// defence - the text is still parsed and range-checked afterwards, same as before -
+        /// it only stops "type a letter into an amount, find out on Save" before it starts.
+        /// Shared by <see cref="EditDialog"/>'s Number/Money/Integer fields and the point-of-sale
+        /// screen's own hand-built amount boxes, so both read the same rule.
+        /// </summary>
+        public static void AttachNumericFilter(TextBox box, bool allowDecimal = true,
+                                               bool allowNegative = false)
+        {
+            // Read from the current culture rather than assuming "." and "-": the same figure is
+            // parsed back with CultureInfo.CurrentCulture, so refusing the separator this machine
+            // actually writes would make a valid amount impossible to type.
+            var format = System.Globalization.CultureInfo.CurrentCulture.NumberFormat;
+            var separator = format.NumberDecimalSeparator;
+            var negativeSign = format.NegativeSign;
+
+            box.KeyPress += (_, e) =>
+            {
+                if (char.IsControl(e.KeyChar)) return;
+                if (char.IsDigit(e.KeyChar)) return;
+
+                var typed = e.KeyChar.ToString();
+
+                if (allowDecimal && typed == separator && !box.Text.Contains(separator)) return;
+
+                if (allowNegative && typed == negativeSign && box.SelectionStart == 0 &&
+                    !box.Text.Contains(negativeSign))
+                {
+                    return;
+                }
+
+                e.Handled = true;
+            };
+        }
+
+        /// <summary>
+        /// Rejects a keystroke that could not belong to a phone number: digits, spaces,
+        /// parentheses, a hyphen, and one leading plus for a country code - "0917-555-0142" and
+        /// "+63 917 555 0142" both type cleanly. Deliberately looser than digits-only: real
+        /// seeded numbers in this application already contain hyphens, and a filter strict
+        /// enough to reject them would make existing data impossible to re-type. Only letters
+        /// and other obviously-wrong characters are refused; nothing here enforces a specific
+        /// phone format, and the server remains the authority on whether a number is valid.
+        /// </summary>
+        public static void AttachPhoneFilter(TextBox box)
+        {
+            box.KeyPress += (_, e) =>
+            {
+                if (char.IsControl(e.KeyChar)) return;
+                if (char.IsDigit(e.KeyChar)) return;
+                if (e.KeyChar is ' ' or '-' or '(' or ')') return;
+
+                if (e.KeyChar == '+' && box.SelectionStart == 0 && !box.Text.Contains('+')) return;
+
+                e.Handled = true;
+            };
+        }
+
         // ------------------------------------------------------------------ formatting
 
         public static string Money(decimal value) => value.ToString("N2");
@@ -694,20 +811,20 @@ namespace ERP_Project1
         /// A destructive-action confirmation. Takes the consequence as well as the question,
         /// because "Are you sure?" tells an operator nothing about what they are about to lose.
         /// </summary>
-        public static bool ConfirmDelete(IWin32Window? owner, string question, string consequence)
+        public static bool ConfirmDelete(IWin32Window? owner, string question, string consequence,
+                                         string confirmLabel = "Delete")
         {
             var body = string.IsNullOrWhiteSpace(consequence)
                 ? question
                 : $"{question}\r\n\r\n{consequence}";
 
-            return MessageBox.Show(owner, body, "Confirm",
-                MessageBoxButtons.YesNo, MessageBoxIcon.Warning,
-                MessageBoxDefaultButton.Button2) == DialogResult.Yes;
+            return ConfirmDialog.Show(owner, "Confirm", body, confirmLabel, "Cancel",
+                ButtonTone.Danger) == DialogResult.Yes;
         }
 
-        public static DialogResult Confirm(string message, string caption = "FitCore ERP") =>
-            MessageBox.Show(message, caption, MessageBoxButtons.YesNo,
-                MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2);
+        public static DialogResult Confirm(string message, string caption = "FitCore ERP",
+                                           string confirmLabel = "Yes", string cancelLabel = "No") =>
+            ConfirmDialog.Show(null, caption, message, confirmLabel, cancelLabel, ButtonTone.Primary);
 
         public static void Info(string message, string caption = "FitCore ERP") =>
             MessageBox.Show(message, caption, MessageBoxButtons.OK, MessageBoxIcon.Information);

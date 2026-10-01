@@ -85,6 +85,8 @@ namespace ERP_domain.entities
         public const string StockReceived = "StockReceived";
         public const string StockIssued = "StockIssued";
         public const string PayrollPaid = "PayrollPaid";
+        public const string PayrollGenerated = "PayrollGenerated";
+        public const string PayrollStatusChanged = "PayrollStatusChanged";
         public const string SubscriptionRenewed = "SubscriptionRenewed";
         public const string SubscriptionCancelled = "SubscriptionCancelled";
     }

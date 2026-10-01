@@ -17,9 +17,10 @@ namespace ERP_infrastructure.services
         Task<PaymentSummary> GetSummaryAsync();
 
         // Full form used by the Payment module. A payment may settle a subscription or a sale,
-        // but not both.
+        // but not both. memberId is null for a walk-in payment, which then carries walkInName
+        // instead - exactly one of the two identifies who paid.
         Task<Payment> RecordPaymentAsync(
-            int memberId,
+            int? memberId,
             int? subscriptionId,
             int? saleId,
             decimal amount,
@@ -27,7 +28,9 @@ namespace ERP_infrastructure.services
             string method,
             string referenceNo,
             string status,
-            string notes);
+            string notes,
+            string? walkInName = null,
+            decimal? amountTendered = null);
 
         // Subscription-scoped shorthand kept for the existing API and Subscription screen.
         Task<Payment> RecordPaymentAsync(int subscriptionId, decimal amount, string method);
@@ -39,7 +42,8 @@ namespace ERP_infrastructure.services
             string method,
             string referenceNo,
             string status,
-            string notes);
+            string notes,
+            decimal? amountTendered = null);
 
         Task<Payment?> UpdatePaymentStatusAsync(int id, string status);
 

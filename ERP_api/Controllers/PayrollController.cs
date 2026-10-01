@@ -54,12 +54,31 @@ namespace ERP_api.Controllers
         [HttpPost]
         [ProducesResponseType(typeof(PayrollView), StatusCodes.Status201Created)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status403Forbidden)]
         public async Task<ActionResult<PayrollView>> Create([FromBody] CreatePayrollDto dto)
         {
             var payroll = await _payrollService.CreatePayrollAsync(
                 dto.EmployeeId, dto.PeriodStart, dto.PeriodEnd,
                 dto.BasicSalary, dto.Allowances, dto.Deductions,
                 dto.OvertimeHours, dto.OvertimeRate, dto.Notes);
+
+            return CreatedAtAction(nameof(GetById), new { id = payroll.PayrollId }, payroll);
+        }
+
+        /// <summary>
+        /// Generates a run from the employee's recorded attendance instead of typed hours:
+        /// regular/overtime hours come from Attendance, pay from the employee's hourly rate,
+        /// and the statutory deductions from the configured reference table.
+        /// </summary>
+        [HttpPost("generate")]
+        [ProducesResponseType(typeof(PayrollView), StatusCodes.Status201Created)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status403Forbidden)]
+        public async Task<ActionResult<PayrollView>> Generate([FromBody] GeneratePayrollDto dto)
+        {
+            var payroll = await _payrollService.GenerateFromAttendanceAsync(
+                dto.EmployeeId, dto.PeriodStart, dto.PeriodEnd,
+                dto.Allowances, dto.OtherDeductions, dto.Notes);
 
             return CreatedAtAction(nameof(GetById), new { id = payroll.PayrollId }, payroll);
         }

@@ -41,6 +41,9 @@ namespace ERP_Project1.Api
         public int ActiveSubscriptions { get; set; }
         public int ExpiringSoon { get; set; }
         public int ExpiredSubscriptions { get; set; }
+        public int ExpiringWithin1Day { get; set; }
+        public int ExpiringWithin3Days { get; set; }
+        public int ExpiringWithin7Days { get; set; }
         public int TotalPlans { get; set; }
 
         public int TotalProducts { get; set; }
@@ -68,6 +71,7 @@ namespace ERP_Project1.Api
         public int ActiveEmployees { get; set; }
         public decimal PayrollThisMonth { get; set; }
         public decimal PayrollOutstanding { get; set; }
+        public int DraftPayrollRuns { get; set; }
         public decimal ExpensesThisMonth { get; set; }
         public decimal ExpensesTotal { get; set; }
         public decimal NetThisMonth { get; set; }
@@ -133,7 +137,7 @@ namespace ERP_Project1.Api
     {
         public string Source { get; set; } = "";
         public int ReferenceId { get; set; }
-        public int MemberId { get; set; }
+        public int? MemberId { get; set; }
         public string MemberName { get; set; } = "";
         public DateTime Date { get; set; }
         public decimal Total { get; set; }
@@ -204,5 +208,126 @@ namespace ERP_Project1.Api
         public List<CategorySliceDto> ByCategory { get; set; } = new();
         public List<TrendPointDto> ByDay { get; set; } = new();
         public List<ExpenseDto> Expenses { get; set; } = new();
+    }
+
+    /// <summary>One employee's attendance for the period an Employee report covers.</summary>
+    public class EmployeeAttendanceRowDto
+    {
+        public int EmployeeId { get; set; }
+        public string EmployeeCode { get; set; } = "";
+        public string EmployeeName { get; set; } = "";
+        public string Position { get; set; } = "";
+        public string Department { get; set; } = "";
+        public string Status { get; set; } = "";
+        public DateTime HireDate { get; set; }
+        public int DaysPresent { get; set; }
+        public int DaysAbsent { get; set; }
+        public int DaysLate { get; set; }
+        public int DaysOnLeave { get; set; }
+        public decimal RegularHours { get; set; }
+        public decimal OvertimeHours { get; set; }
+        public int DaysRecorded { get; set; }
+        public decimal AttendanceRate { get; set; }
+    }
+
+    public class EmployeeReportDto
+    {
+        public DateTime FromUtc { get; set; }
+        public DateTime ToUtc { get; set; }
+        public int TotalEmployees { get; set; }
+        public int ActiveEmployees { get; set; }
+        public int InactiveEmployees { get; set; }
+        public int NewHiresInRange { get; set; }
+        public int DaysPresent { get; set; }
+        public int DaysAbsent { get; set; }
+        public int DaysLate { get; set; }
+        public int DaysOnLeave { get; set; }
+        public decimal TotalRegularHours { get; set; }
+        public decimal TotalOvertimeHours { get; set; }
+        public decimal AttendanceRate { get; set; }
+        public int PendingLeaveRequests { get; set; }
+        public int ApprovedLeaveRequests { get; set; }
+        public decimal ApprovedLeaveDays { get; set; }
+        public List<CategorySliceDto> ByPosition { get; set; } = new();
+        public List<CategorySliceDto> ByLeaveType { get; set; } = new();
+        public List<TrendPointDto> AttendanceByDay { get; set; } = new();
+        public List<EmployeeAttendanceRowDto> Employees { get; set; } = new();
+    }
+
+    /// <summary>One day's takings set against what the ledger was told about them.</summary>
+    public class ReconciliationDayRowDto
+    {
+        public DateTime Date { get; set; }
+        public int PaymentCount { get; set; }
+        public decimal Takings { get; set; }
+        public decimal Posted { get; set; }
+        public decimal Variance { get; set; }
+        public bool IsBalanced { get; set; }
+    }
+
+    /// <summary>
+    /// The takings, the ledger and the bank set against each other. A variance is a finding
+    /// rather than an error: posting is deliberately allowed to fall behind the till, and
+    /// <see cref="UnpostedPayments"/> names exactly what the Finance catch-up sweep would fix.
+    /// </summary>
+    public class PaymentReconciliationDto
+    {
+        public DateTime FromUtc { get; set; }
+        public DateTime ToUtc { get; set; }
+        public int PaymentCount { get; set; }
+        public decimal Takings { get; set; }
+        public decimal Pending { get; set; }
+        public decimal Refunded { get; set; }
+        public decimal PostedToLedger { get; set; }
+        public decimal Variance { get; set; }
+        public bool IsBalanced { get; set; }
+        public decimal BankedIn { get; set; }
+        public decimal BankedOut { get; set; }
+        public int UnreconciledBankCount { get; set; }
+        public decimal UnreconciledBankAmount { get; set; }
+        public int UnpostedPaymentCount { get; set; }
+        public decimal UnpostedPaymentAmount { get; set; }
+        public List<PaymentMethodTotalDto> ByMethod { get; set; } = new();
+        public List<ReconciliationDayRowDto> ByDay { get; set; } = new();
+        public List<PaymentViewDto> UnpostedPayments { get; set; } = new();
+    }
+
+    /// <summary>
+    /// Payroll cost for a period. The employer share sits beside the deductions rather than
+    /// inside them: a deduction comes out of what the employee is owed, an employer
+    /// contribution is a cost on top of it.
+    /// </summary>
+    public class PayrollReportDto
+    {
+        public DateTime FromUtc { get; set; }
+        public DateTime ToUtc { get; set; }
+        public int RunCount { get; set; }
+        public int EmployeeCount { get; set; }
+        public int PaidRunCount { get; set; }
+        public int UnpaidRunCount { get; set; }
+        public decimal RegularHours { get; set; }
+        public decimal OvertimeHours { get; set; }
+        public decimal RegularPay { get; set; }
+        public decimal OvertimePay { get; set; }
+        public decimal Allowances { get; set; }
+        public decimal GrossPay { get; set; }
+        public decimal Sss { get; set; }
+        public decimal PhilHealth { get; set; }
+        public decimal PagIbig { get; set; }
+        public decimal WithholdingTax { get; set; }
+        public decimal OtherDeductions { get; set; }
+        public decimal TotalDeductions { get; set; }
+        public decimal NetPay { get; set; }
+        public decimal SssEmployerShare { get; set; }
+        public decimal PhilHealthEmployerShare { get; set; }
+        public decimal PagIbigEmployerShare { get; set; }
+        public decimal EmployerContributions { get; set; }
+        public decimal TotalEmploymentCost { get; set; }
+        public decimal Paid { get; set; }
+        public decimal Outstanding { get; set; }
+        public List<CategorySliceDto> ByStatus { get; set; } = new();
+        public List<CategorySliceDto> DeductionBreakdown { get; set; } = new();
+        public List<TrendPointDto> ByDay { get; set; } = new();
+        public List<PayrollDto> Runs { get; set; } = new();
     }
 }

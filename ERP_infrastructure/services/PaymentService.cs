@@ -15,26 +15,29 @@ namespace ERP_infrastructure.services
         private readonly IMemberRepository _memberRepo;
         private readonly TenantErpDbContext _context;
         private readonly ICurrentUserAccessor _actor;
+        private readonly IFinancePostingService _finance;
 
         public PaymentService(
             IPaymentRepository repository,
             ISubscriptionRepository subscriptionRepo,
             IMemberRepository memberRepo,
             TenantErpDbContext context,
-            ICurrentUserAccessor actor)
+            ICurrentUserAccessor actor,
+            IFinancePostingService finance)
         {
             _repository = repository;
             _subscriptionRepo = subscriptionRepo;
             _memberRepo = memberRepo;
             _context = context;
             _actor = actor;
+            _finance = finance;
         }
 
         public static PaymentView ToView(Payment payment)
         {
-            var memberName = payment.Member == null
-                ? $"Member #{payment.MemberId}"
-                : $"{payment.Member.FirstName} {payment.Member.LastName}".Trim();
+            var memberName = payment.Member is not null
+                ? $"{payment.Member.FirstName} {payment.Member.LastName}".Trim()
+                : string.IsNullOrWhiteSpace(payment.WalkInName) ? "Walk-In" : payment.WalkInName;
 
             // Categories written before the column existed, or by a caller that did not set
             // one, are recovered from what the payment is attached to.
@@ -71,7 +74,9 @@ namespace ERP_infrastructure.services
                 Method = payment.Method,
                 ReferenceNo = payment.ReferenceNo,
                 Status = payment.Status,
-                Notes = payment.Notes
+                Notes = payment.Notes,
+                AmountTendered = payment.AmountTendered,
+                ChangeGiven = payment.ChangeGiven
             };
         }
 
@@ -201,7 +206,7 @@ namespace ERP_infrastructure.services
         }
 
         public async Task<Payment> RecordPaymentAsync(
-            int memberId,
+            int? memberId,
             int? subscriptionId,
             int? saleId,
             decimal amount,
@@ -209,7 +214,9 @@ namespace ERP_infrastructure.services
             string method,
             string referenceNo,
             string status,
-            string notes)
+            string notes,
+            string? walkInName = null,
+            decimal? amountTendered = null)
         {
             if (amount <= 0)
                 throw new InvalidOperationException("Payment amount must be greater than zero.");
@@ -218,16 +225,22 @@ namespace ERP_infrastructure.services
                 throw new InvalidOperationException(
                     "A payment settles either a membership or a sale, not both.");
 
-            var member = await _memberRepo.GetByIdAsync(memberId);
-            if (member == null)
-                throw new InvalidOperationException("Member not found.");
+            // Exactly one of a real member or a walk-in name identifies who paid. A standalone
+            // payment names neither at all - it is then simply "Walk-In".
+            Member? member = null;
+            if (memberId.HasValue)
+            {
+                member = await _memberRepo.GetByIdAsync(memberId.Value);
+                if (member == null)
+                    throw new InvalidOperationException("Member not found.");
+            }
 
             if (subscriptionId.HasValue)
             {
                 var subscription = await _subscriptionRepo.GetByIdAsync(subscriptionId.Value);
                 if (subscription == null)
                     throw new InvalidOperationException("Subscription not found.");
-                if (subscription.MemberId != memberId)
+                if (memberId.HasValue && subscription.MemberId != memberId)
                     throw new InvalidOperationException("That subscription belongs to a different member.");
             }
 
@@ -241,7 +254,7 @@ namespace ERP_infrastructure.services
 
                 if (sale == null)
                     throw new InvalidOperationException("Sale not found.");
-                if (sale.MemberId != memberId)
+                if (memberId.HasValue && sale.MemberId != memberId)
                     throw new InvalidOperationException("That sale belongs to a different member.");
                 if (string.Equals(sale.Status, "Cancelled", StringComparison.OrdinalIgnoreCase))
                     throw new InvalidOperationException("That sale has been cancelled and cannot take payment.");
@@ -259,11 +272,31 @@ namespace ERP_infrastructure.services
                 }
             }
 
+            var normalisedMethod = NormaliseMethod(method);
+
+            // Change is always computed here, never accepted from the caller - the same trust
+            // boundary payroll's net pay already uses.
+            decimal? changeGiven = null;
+            if (string.Equals(normalisedMethod, "Cash", StringComparison.OrdinalIgnoreCase)
+                && amountTendered.HasValue)
+            {
+                if (amountTendered.Value < amount)
+                    throw new InvalidOperationException(
+                        $"Amount tendered of {amountTendered.Value:N2} is less than the amount due of {amount:N2}.");
+
+                changeGiven = amountTendered.Value - amount;
+            }
+
+            var resolvedWalkInName = member is null
+                ? (string.IsNullOrWhiteSpace(walkInName) ? "Walk-In" : walkInName.Trim())
+                : null;
+
             var actor = _actor.Current;
 
             var payment = new Payment
             {
                 MemberId = memberId,
+                WalkInName = resolvedWalkInName,
                 SubscriptionId = subscriptionId,
                 SaleId = saleId,
 
@@ -274,7 +307,7 @@ namespace ERP_infrastructure.services
 
                 Amount = amount,
                 PaymentDate = paymentDate == default ? DateTime.UtcNow : paymentDate,
-                Method = NormaliseMethod(method),
+                Method = normalisedMethod,
                 ReferenceNo = (referenceNo ?? string.Empty).Trim(),
                 Status = normalisedStatus,
                 Notes = (notes ?? string.Empty).Trim(),
@@ -284,10 +317,19 @@ namespace ERP_infrastructure.services
                 ProcessedByUserId = actor.AppUserId,
                 ProcessedBy = actor.DisplayName,
 
+                AmountTendered = changeGiven.HasValue ? amountTendered : null,
+                ChangeGiven = changeGiven,
+
                 CreatedAt = DateTime.UtcNow
             };
 
-            return await _repository.AddAsync(payment);
+            var saved = await _repository.AddAsync(payment);
+
+            // Posted after the payment itself is committed. Money that was taken was taken;
+            // the ledger follows from that and never gets to refuse it.
+            await _finance.PostPaymentAsync(saved.PaymentId);
+
+            return saved;
         }
 
         public async Task<Payment> RecordPaymentAsync(int subscriptionId, decimal amount, string method)
@@ -315,7 +357,8 @@ namespace ERP_infrastructure.services
             string method,
             string referenceNo,
             string status,
-            string notes)
+            string notes,
+            decimal? amountTendered = null)
         {
             if (amount <= 0)
                 throw new InvalidOperationException("Payment amount must be greater than zero.");
@@ -349,12 +392,28 @@ namespace ERP_infrastructure.services
                 }
             }
 
+            var normalisedMethod = NormaliseMethod(method);
+
+            // Recomputed exactly as at creation, never accepted directly.
+            decimal? changeGiven = null;
+            if (string.Equals(normalisedMethod, "Cash", StringComparison.OrdinalIgnoreCase)
+                && amountTendered.HasValue)
+            {
+                if (amountTendered.Value < amount)
+                    throw new InvalidOperationException(
+                        $"Amount tendered of {amountTendered.Value:N2} is less than the amount due of {amount:N2}.");
+
+                changeGiven = amountTendered.Value - amount;
+            }
+
             payment.Amount = amount;
             payment.PaymentDate = paymentDate == default ? payment.PaymentDate : paymentDate;
-            payment.Method = NormaliseMethod(method);
+            payment.Method = normalisedMethod;
             payment.ReferenceNo = (referenceNo ?? string.Empty).Trim();
             payment.Status = normalisedStatus;
             payment.Notes = (notes ?? string.Empty).Trim();
+            payment.AmountTendered = changeGiven.HasValue ? amountTendered : null;
+            payment.ChangeGiven = changeGiven;
 
             return await _repository.UpdateAsync(payment);
         }
@@ -364,8 +423,27 @@ namespace ERP_infrastructure.services
             var payment = await _repository.GetByIdAsync(id);
             if (payment == null) return null;
 
+            var wasCompleted = string.Equals(payment.Status, "Completed", StringComparison.OrdinalIgnoreCase);
+
             payment.Status = NormaliseStatus(status);
-            return await _repository.UpdateAsync(payment);
+
+            var isCompleted = string.Equals(payment.Status, "Completed", StringComparison.OrdinalIgnoreCase);
+
+            var updated = await _repository.UpdateAsync(payment);
+
+            // Only a completed payment belongs in the ledger, so crossing that line in either
+            // direction is what moves the books. A pending payment that completes is posted
+            // now; one that is refunded or fails is reversed rather than deleted.
+            if (!wasCompleted && isCompleted)
+            {
+                await _finance.PostPaymentAsync(id);
+            }
+            else if (wasCompleted && !isCompleted)
+            {
+                await _finance.ReversePaymentAsync(id, $"Payment marked {payment.Status.ToLowerInvariant()}");
+            }
+
+            return updated;
         }
 
         public async Task<Payment?> VoidPaymentAsync(int id, string reason = "")
@@ -389,12 +467,21 @@ namespace ERP_infrastructure.services
                 if (payment.Notes.Length > 300) payment.Notes = payment.Notes[..300];
             }
 
-            return await _repository.UpdateAsync(payment);
+            var updated = await _repository.UpdateAsync(payment);
+
+            await _finance.ReversePaymentAsync(
+                id, string.IsNullOrWhiteSpace(trimmed) ? "Payment voided" : trimmed);
+
+            return updated;
         }
 
         public async Task<bool> DeletePaymentAsync(int id)
         {
-            return await _repository.DeleteAsync(id);
+            var removed = await _repository.DeleteAsync(id);
+
+            if (removed) await _finance.ReversePaymentAsync(id, "Payment deleted");
+
+            return removed;
         }
 
         private static string NormaliseStatus(string status)

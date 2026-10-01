@@ -2,6 +2,7 @@ using ERP_domain.entities;
 using ERP_infrastructure.repositories;
 using ERP_infrastructure.services;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using Xunit;
 
 namespace ERP_Tests;
@@ -25,9 +26,10 @@ public class SalesAndAuditTests
         public IInventoryService Inventory { get; }
         public IMemberService Members { get; }
 
-        public Harness()
+        public Harness(ICurrentUserAccessor? actor = null)
         {
             Db = new TenantDbFixture();
+            actor ??= new NullCurrentUserAccessor();
 
             var memberRepo = new MemberRepository(Db.Context);
             var productRepo = new ProductRepository(Db.Context);
@@ -36,13 +38,17 @@ public class SalesAndAuditTests
             var saleRepo = new SaleRepository(Db.Context);
             var subscriptionRepo = new SubscriptionRepository(Db.Context);
 
-            Members = new MemberService(memberRepo, paymentRepo);
-            Inventory = new InventoryService(inventoryRepo, productRepo, Db.Context);
+            var supplierRepo = new GenericRepository<Supplier>(Db.Context);
+            var audit = new TenantAuditService(Db.Context, actor);
+
+            Members = new MemberService(memberRepo, paymentRepo, subscriptionRepo);
+            Inventory = new InventoryService(
+                inventoryRepo, productRepo, supplierRepo, Db.Context, actor, audit, Db.Finance);
             Products = new ProductService(productRepo, Inventory, Db.Context);
             Payments = new PaymentService(
-                paymentRepo, subscriptionRepo, memberRepo, Db.Context, new NullCurrentUserAccessor());
+                paymentRepo, subscriptionRepo, memberRepo, Db.Context, actor, Db.Finance);
             Sales = new SaleService(
-                saleRepo, memberRepo, productRepo, paymentRepo, Db.Context, new NullCurrentUserAccessor());
+                saleRepo, memberRepo, productRepo, paymentRepo, Db.Context, actor, audit, Db.Finance);
         }
 
         public void Dispose() => Db.Dispose();
@@ -141,6 +147,21 @@ public class SalesAndAuditTests
         Assert.Equal(3m, movement.Quantity);
         Assert.Equal(20m, movement.BalanceBefore);
         Assert.Equal(17m, movement.BalanceAfter);
+    }
+
+    [Fact]
+    public async Task A_sale_deducts_stock_with_the_movement_attributed_to_the_signed_in_user()
+    {
+        using var h = new Harness(new FakeCurrentUserAccessor(roleKey: ErpRoles.Staff));
+        var (memberId, productId) = await SeedAsync(h, stock: 20m);
+
+        await h.Sales.CreateSaleAsync(
+            memberId, new List<SaleLineRequest> { new() { ProductId = productId, Quantity = 3 } });
+
+        var movement = (await h.Inventory.GetMovementsAsync(productId))
+            .First(m => m.MovementType == "Sale");
+
+        Assert.Equal("Test User", movement.PerformedBy);
     }
 
     [Fact]
@@ -281,6 +302,7 @@ public class PayrollCalculationTests
         public TenantDbFixture Db { get; }
         public IPayrollService Payroll { get; }
         public IEmployeeService Employees { get; }
+        public IAttendanceService Attendance { get; }
 
         public Harness()
         {
@@ -288,9 +310,18 @@ public class PayrollCalculationTests
 
             var employeeRepo = new EmployeeRepository(Db.Context);
             var payrollRepo = new PayrollRepository(Db.Context);
+            var attendanceRepo = new AttendanceRepository(Db.Context);
+            var deductionCalculator = new PayrollDeductionCalculator(
+                Options.Create(new PayrollDeductionOptions()));
 
-            Employees = new EmployeeService(employeeRepo);
-            Payroll = new PayrollService(payrollRepo, employeeRepo);
+            var actor = new NullCurrentUserAccessor();
+
+            Employees = new EmployeeService(
+                employeeRepo, actor, new NoOpUserAccountService());
+            Attendance = new AttendanceService(attendanceRepo, employeeRepo, actor);
+            Payroll = new PayrollService(
+                payrollRepo, employeeRepo, attendanceRepo, deductionCalculator, actor,
+                new TenantAuditService(Db.Context, actor), Db.Finance);
         }
 
         public void Dispose() => Db.Dispose();
@@ -298,7 +329,7 @@ public class PayrollCalculationTests
 
     private static Task<Employee> SeedEmployeeAsync(Harness h, decimal salary = 20000m) =>
         h.Employees.CreateEmployeeAsync(
-            "EMP-1", "Maria", "Santos", "Front Desk", "Operations",
+            "EMP-1", "Maria", "Santos", EmployeePositions.Staff, "Operations",
             "555-1", "maria@example.com", new DateTime(2026, 1, 15), salary);
 
     [Fact]
@@ -436,7 +467,7 @@ public class PayrollCalculationTests
         var first = await SeedEmployeeAsync(h);
 
         var second = await h.Employees.CreateEmployeeAsync(
-            "EMP-2", "Paolo", "Cruz", "Trainer", "Gym",
+            "EMP-2", "Paolo", "Cruz", EmployeePositions.Staff, "Gym",
             "555-2", "paolo@example.com", new DateTime(2026, 2, 1), 25000m);
 
         var start = new DateTime(2026, 11, 1);

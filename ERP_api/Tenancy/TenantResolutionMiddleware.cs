@@ -1,4 +1,6 @@
 using System.Security.Claims;
+using ERP_api.Infrastructure;
+using ERP_domain.entities;
 using ERP_infrastructure.tenant;
 using Microsoft.Extensions.Options;
 
@@ -9,13 +11,16 @@ namespace ERP_api.Tenancy
     /// will be served from.
     ///
     /// Order of precedence:
-    ///   1. A company claim on the authenticated user. This is the authoritative source and
-    ///      becomes the only one that matters once JWT authentication is switched on.
-    ///   2. A request header, but only while running in Development. A client must never be
-    ///      able to pick another company's database in a deployed environment, so this is
-    ///      hard-gated on the environment as well as on configuration.
-    ///   3. The configured default company, which is what keeps the current single-tenant
-    ///      deployment working.
+    ///   1. A Super Admin naming a tenant explicitly. Platform administration has to be able
+    ///      to look inside a tenant - that is most of what it is for - and this is the only
+    ///      supported way to do it. It takes the Super Admin role, which no tenant user can
+    ///      hold, and the cross-tenant flag, which is off by default. Every use is logged.
+    ///   2. The company claim on the authenticated user. Authoritative for everybody else, and
+    ///      the reason an ordinary user cannot reach another tenant whatever they send.
+    ///   3. A request header, but only while running in Development and only for an
+    ///      unauthenticated caller. This is the OpenAPI-reference convenience.
+    ///   4. The configured default company, which is what keeps a single-tenant deployment
+    ///      working.
     ///
     /// The resolved connection string is placed in the scoped tenant context and never leaves
     /// the server.
@@ -59,14 +64,33 @@ namespace ERP_api.Tenancy
                 return;
             }
 
-            var connection = await connectionStringProvider.GetConnectionAsync(
-                companyId, context.RequestAborted);
+            try
+            {
+                var connection = await connectionStringProvider.GetConnectionAsync(
+                    companyId, context.RequestAborted);
 
-            tenantSetter.Set(companyId, connection.ConnectionString, source, connection.UsedFallback);
+                tenantSetter.Set(companyId, connection.ConnectionString, source, connection.UsedFallback);
 
-            _logger.LogDebug(
-                "Request {Path} resolved to company {CompanyId} via {Source} (fallback: {UsedFallback}).",
-                context.Request.Path, companyId, source, connection.UsedFallback);
+                _logger.LogDebug(
+                    "Request {Path} resolved to company {CompanyId} via {Source} (fallback: {UsedFallback}).",
+                    context.Request.Path, companyId, source, connection.UsedFallback);
+            }
+            catch (TenantResolutionException ex)
+            {
+                // A company with no usable database registration must not take down the
+                // endpoints that never needed one.
+                //
+                // Resolution runs for every request, before the router knows which endpoint
+                // was asked for, so failing here would answer 503 to sign-in, to the platform
+                // administration screens, and to anything else that reads only the master
+                // database. Carrying on without a tenant context keeps those working, and an
+                // endpoint that genuinely needs tenant data still fails the moment it asks for
+                // the DbContext - with the same message, from the same exception type.
+                _logger.LogWarning(ex,
+                    "Company {CompanyId} could not be resolved to a database for {Path}. " +
+                    "Continuing without a tenant context; any endpoint that needs one will refuse.",
+                    companyId, context.Request.Path);
+            }
 
             await _next(context);
         }
@@ -74,6 +98,11 @@ namespace ERP_api.Tenancy
         private (int CompanyId, TenantSource Source) DetermineCompany(HttpContext context)
         {
             var isAuthenticated = context.User?.Identity?.IsAuthenticated == true;
+
+            if (TryGetSuperAdminTenant(context, out var chosenCompanyId))
+            {
+                return (chosenCompanyId, TenantSource.Header);
+            }
 
             if (TryGetFromClaims(context.User, out var claimCompanyId))
             {
@@ -122,6 +151,53 @@ namespace ERP_api.Tenancy
             }
 
             return (0, TenantSource.None);
+        }
+
+        /// <summary>
+        /// The Super Admin's controlled route into a tenant.
+        ///
+        /// Platform administration exists to look after tenants, so it has to be able to look
+        /// inside one - to diagnose a gym's problem, to check a migration landed, to answer a
+        /// support question. The alternative designs are worse: copying tenant data into the
+        /// master database duplicates it and breaks isolation, and giving the Super Admin a
+        /// second account per tenant means a password per tenant to manage and leak.
+        ///
+        /// Three things must all hold, and the role is the one that matters. Super Admin is
+        /// level 0, is never a default for any tenant role, and cannot be reached by a
+        /// permission grant - so no amount of misconfiguration inside a gym produces an account
+        /// that can do this. The flag is a deployment-level switch, off by default. And every
+        /// use is logged with the account that did it, because a platform operator reading
+        /// somebody's member list should leave a trace.
+        /// </summary>
+        private bool TryGetSuperAdminTenant(HttpContext context, out int companyId)
+        {
+            companyId = 0;
+
+            if (!_options.EnableCrossTenantAdminApi) return false;
+            if (context.User?.Identity?.IsAuthenticated != true) return false;
+
+            var roleKey = context.User.FindFirst(FitCoreClaims.RoleKey)?.Value;
+
+            if (!string.Equals(roleKey, ErpRoles.SuperAdmin, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            if (!context.Request.Headers.TryGetValue(_options.HeaderName, out var headerValues) ||
+                !int.TryParse(headerValues.FirstOrDefault(), out var requested) ||
+                requested <= 0)
+            {
+                return false;
+            }
+
+            _logger.LogWarning(
+                "Platform administrator {User} is reading company {CompanyId} at {Path}.",
+                context.User.FindFirst(ClaimTypes.Name)?.Value ?? "unknown",
+                requested,
+                context.Request.Path);
+
+            companyId = requested;
+            return true;
         }
 
         private bool TryGetFromClaims(ClaimsPrincipal? user, out int companyId)

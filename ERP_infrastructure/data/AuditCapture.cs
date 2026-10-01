@@ -58,7 +58,15 @@ namespace ERP_infrastructure.data
             foreach (var entry in tracker.Entries())
             {
                 // The trail must not record itself, and an unchanged row is not an event.
-                if (entry.Entity is AuditEvent) continue;
+                //
+                // Journal entries are excluded for the same reason. A posting is already the
+                // financial record of something the trail recorded when it happened - a sale, a
+                // pay run - so auditing it writes the same event twice, once in the operator's
+                // language and once in an accountant's. A single sale would leave three or four
+                // extra rows describing debits nobody searched for, which is how a useful audit
+                // log becomes one people stop reading. The ledger is its own immutable record:
+                // a posted entry is never edited, only reversed, and both stay visible.
+                if (entry.Entity is AuditEvent or JournalEntry or JournalEntryLine) continue;
 
                 var action = entry.State switch
                 {
@@ -181,14 +189,18 @@ namespace ERP_infrastructure.data
         /// </summary>
         private static string ModuleFor(object entity) => entity switch
         {
-            Member or MembershipPlan or Subscription => ErpModules.Membership,
-            Sale or SaleItem or Customer             => ErpModules.Sales,
+            Member or MembershipPlan or Subscription or MemberNote => ErpModules.Membership,
+            Sale or SaleItem or Customer or SaleReturn or SaleReturnItem => ErpModules.Sales,
             Payment                                  => ErpModules.Payments,
             Product or Inventory or StockMovement or Supplier => ErpModules.Inventory,
-            Employee                                 => ErpModules.Employees,
+            Purchase or PurchaseItem or SupplierPayment => ErpModules.Inventory,
+            Employee or Attendance or LeaveRequest   => ErpModules.Employees,
             Payroll                                  => ErpModules.Payroll,
-            Expense                                  => ErpModules.Expenses,
-            AppUser or AppRole or AppUserPermission or AppRolePermission => ErpModules.UserAccess,
+            Expense or Account or FinancialPeriod    => ErpModules.Finance,
+            Budget or BudgetLine or BankAccount or BankTransaction => ErpModules.Finance,
+            TenantSetting                            => ErpModules.SystemAdmin,
+            SubscriptionPlan or CompanySubscription or PlatformSetting => ErpModules.SystemAdmin,
+            AppUser or AppRole or AppUserPermission or AppRolePermission => ErpModules.SystemAdmin,
             Company or CompanyDatabase or Device     => ErpModules.SystemAdmin,
             _                                        => ""
         };

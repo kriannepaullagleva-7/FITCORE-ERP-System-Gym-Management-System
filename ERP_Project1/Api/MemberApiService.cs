@@ -42,5 +42,22 @@ namespace ERP_Project1.Api
 
         public Task<ApiResult<MemberDto>> RestoreAsync(int id) =>
             SendAsync<MemberDto>(() => Http.PostAsync($"{BasePath}/{id}/restore", null));
+
+        // ------------------------------------------------------------------ history
+
+        /// <summary>
+        /// One member's own records, read through the Members endpoints rather than by asking
+        /// for every subscription in the gym and filtering here. The server already knows how
+        /// to answer "this member's", and filtering client-side would pull the whole tenant's
+        /// history across the wire to show one person's.
+        /// </summary>
+        public Task<ApiResult<List<SubscriptionDto>>> GetSubscriptionsAsync(int memberId) =>
+            SendAsync<List<SubscriptionDto>>(() => Http.GetAsync($"{BasePath}/{memberId}/subscriptions"));
+
+        public Task<ApiResult<List<PaymentViewDto>>> GetPaymentsAsync(int memberId) =>
+            SendAsync<List<PaymentViewDto>>(() => Http.GetAsync($"{BasePath}/{memberId}/payments"));
+
+        public Task<ApiResult<List<SaleDto>>> GetSalesAsync(int memberId) =>
+            SendAsync<List<SaleDto>>(() => Http.GetAsync($"{BasePath}/{memberId}/sales"));
     }
 }

@@ -195,6 +195,23 @@ namespace ERP_infrastructure.services
                         $"from {previous} to {tier} Enterprise");
                 }
 
+                // Bringing a reserved tenant into service.
+                //
+                // Deliberately one-way: configuration can activate a company, because setting
+                // Enabled to true is an operator asking for exactly that, and without this the
+                // flag would silently do nothing for a company that already exists. It never
+                // deactivates one. Taking a gym out of service is a decision made in the
+                // platform screens with a stated reason, and a stale configuration file should
+                // not be able to lock a paying tenant out on the next restart.
+                if (tenant.Enabled && !company.IsActive)
+                {
+                    company.IsActive = true;
+
+                    report.Actions.Add(
+                        $"activated company {company.CompanyId} ('{tenant.CompanyCode}'), " +
+                        "which was registered but not in service");
+                }
+
                 // The company name is shown in the topbar and on every User Access row, so it
                 // is kept in step with configuration. Configuration is operator-owned, which
                 // makes this a correction rather than an override.

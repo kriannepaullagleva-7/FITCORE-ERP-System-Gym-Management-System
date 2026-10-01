@@ -91,7 +91,15 @@ public sealed class ApiAuthorizationTests : IClassFixture<ApiAuthorizationTests.
             public Task<TenantConnection> GetConnectionAsync(
                 int companyId, CancellationToken cancellationToken = default) =>
                 Task.FromResult(new TenantConnection(
-                    $"Server=(localdb)\\unused;Database=tenant-{companyId};Trusted_Connection=True;",
+                    // A closed TCP port with a one second timeout, for the same reason the
+                    // master connection above uses one: a request that is *supposed* to get
+                    // past the filter then tries to open this, and the test only cares that it
+                    // was not refused. Pointing at "(localdb)\unused" instead made each of
+                    // those wait on SqlClient trying to start a LocalDB instance that does not
+                    // exist, which is tens of seconds each and turned a one minute suite into
+                    // a twenty minute one.
+                    $"Server=tcp:127.0.0.1,1;Database=tenant-{companyId};User Id=none;" +
+                    "Password=none;Encrypt=False;Connect Timeout=1;",
                     UsedFallback: false));
         }
     }
@@ -107,7 +115,8 @@ public sealed class ApiAuthorizationTests : IClassFixture<ApiAuthorizationTests.
     /// these tests cannot drift from how claims are really issued.
     /// </summary>
     private HttpClient ClientFor(
-        EnterpriseTier tier, string roleKey, int companyId = 4, string username = "test.user")
+        EnterpriseTier tier, string roleKey, int companyId = 4, string username = "test.user",
+        int? branchId = null)
     {
         var user = new AuthenticatedUser
         {
@@ -121,6 +130,11 @@ public sealed class ApiAuthorizationTests : IClassFixture<ApiAuthorizationTests.
             RoleKey = roleKey,
             RoleDisplayName = ErpRoles.DisplayNameOf(roleKey),
             RoleLevel = ErpRoles.LevelOf(roleKey),
+
+            // A branch-bound account, when the test asks for one. Sign-in reads this from
+            // AppUser.BranchId and the token service turns it into a signed claim, which is
+            // what makes the scope non-negotiable for the accounts that carry it.
+            BranchId = branchId,
 
             // Resolved the same way sign-in resolves it: the role's grants, narrowed by tier.
             Modules = PermissionResolver
@@ -217,12 +231,15 @@ public sealed class ApiAuthorizationTests : IClassFixture<ApiAuthorizationTests.
     }
 
     /// <summary>
-    /// Small adds Employees and Payroll and nothing else. Reaching them proves the expansion
-    /// works; being refused User Access proves it stopped where it should.
+    /// Small is a whole single-site gym, books included. What it is refused is System
+    /// Administration - accounts, roles, the audit trail and the branch network - which is the
+    /// one module the Medium tier adds.
     /// </summary>
     [Theory]
-    [InlineData("/api/expenses")]
     [InlineData("/api/users")]
+    [InlineData("/api/branches")]
+    [InlineData("/api/settings")]
+    [InlineData("/api/audit-events")]
     [InlineData("/api/companies")]
     public async Task A_small_tenant_is_still_refused_the_medium_modules(string path)
     {
@@ -287,16 +304,24 @@ public sealed class ApiAuthorizationTests : IClassFixture<ApiAuthorizationTests.
     /// receptionist can still see it. The action's rule must win over the controller's.
     /// </summary>
     [Fact]
-    public async Task Staff_reach_the_dashboard_on_a_controller_they_otherwise_cannot_use()
+    public async Task Staff_reach_their_own_modules_data_on_a_controller_they_otherwise_cannot_use()
     {
         var client = ClientFor(EnterpriseTier.Small, ErpRoles.Staff);
 
+        // The dashboard is Business Intelligence's landing page, and Staff hold no part of
+        // Business Intelligence at all.
         var dashboard = await client.GetAsync("/api/reports/dashboard");
-        Assert.NotEqual(HttpStatusCode.Forbidden, dashboard.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, dashboard.StatusCode);
 
-        // The rest of the Reports controller stays closed to them.
+        // But this is the Subscriptions tab's own data, not a report - it is guarded on
+        // Membership, which Staff hold, so authorization passes even though the rest of the
+        // Reports controller is Business Intelligence's. This suite's tenant connection points
+        // nowhere on purpose (see StubConnectionStringProvider), so a request cleared to reach
+        // the database fails on that fake connection rather than on the authorization filter -
+        // neither 401 nor 403 is what proves the point here.
         var overview = await client.GetAsync("/api/reports/membership-overview");
         Assert.NotEqual(HttpStatusCode.Unauthorized, overview.StatusCode);
+        Assert.NotEqual(HttpStatusCode.Forbidden, overview.StatusCode);
     }
 
     // ------------------------------------------------------------------ cross-tenant admin
@@ -402,5 +427,247 @@ public sealed class ApiAuthorizationTests : IClassFixture<ApiAuthorizationTests.
         var response = await client.GetAsync("/api/members");
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    // ------------------------------------------------------------------ the module reports
+
+    /// <summary>
+    /// Each module report is guarded by the module it reports on rather than by Business
+    /// Intelligence, so that the desktop's per-module Reports tabs and the endpoints behind them
+    /// answer to the same subfeature.
+    ///
+    /// A Micro tenant has no Employees or Payroll, so their reports must be refused however
+    /// senior the caller - the report is a way of reading a module, not a way around the tier.
+    /// </summary>
+    [Theory]
+    [InlineData("/api/reports/employees")]
+    [InlineData("/api/reports/payroll")]
+    [InlineData("/api/reports/expenses")]
+    [InlineData("/api/reports/payment-reconciliation")]
+    public async Task A_micro_tenant_is_refused_the_reports_of_modules_it_does_not_have(string path)
+    {
+        var client = ClientFor(EnterpriseTier.Micro, ErpRoles.Admin, companyId: 3);
+
+        var response = await client.GetAsync(path);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    /// <summary>
+    /// The reports of the two modules Micro does have stay reachable for a manager. This is the
+    /// half of the guard rule that must not have narrowed anything: a module report is gated on
+    /// the module it reports on, not on Business Intelligence - which a Micro tenant no longer
+    /// holds at all. Without that, moving Business Intelligence up to Small would have taken
+    /// every report on a Micro tenant with it.
+    /// </summary>
+    [Theory]
+    [InlineData("/api/reports/payments")]
+    [InlineData("/api/reports/membership")]
+    public async Task A_micro_tenant_manager_still_reaches_the_reports_of_its_own_modules(string path)
+    {
+        var client = ClientFor(EnterpriseTier.Micro, ErpRoles.Manager, companyId: 3);
+
+        var response = await client.GetAsync(path);
+
+        Assert.NotEqual(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.NotEqual(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    /// <summary>
+    /// Reports are Manager and above on every tier. A receptionist holds Sales and Payments, but
+    /// not the reporting over them - which is why the module alone is not the whole guard.
+    /// </summary>
+    [Theory]
+    [InlineData("/api/reports/sales")]
+    [InlineData("/api/reports/payments")]
+    [InlineData("/api/reports/inventory")]
+    [InlineData("/api/reports/membership")]
+    [InlineData("/api/reports/employees")]
+    [InlineData("/api/reports/payroll")]
+    public async Task Staff_are_refused_the_module_reports_even_for_modules_they_hold(string path)
+    {
+        var client = ClientFor(EnterpriseTier.Small, ErpRoles.Staff);
+
+        var response = await client.GetAsync(path);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Theory]
+    [InlineData("/api/reports/employees")]
+    [InlineData("/api/reports/payroll")]
+    public async Task A_small_tenant_manager_reaches_the_workforce_reports(string path)
+    {
+        var client = ClientFor(EnterpriseTier.Small, ErpRoles.Manager);
+
+        var response = await client.GetAsync(path);
+
+        Assert.NotEqual(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.NotEqual(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    /// <summary>
+    /// Expenses are a Finance subfeature, so the expense report is gated exactly as
+    /// <c>/api/expenses</c> is. Left on the Business Intelligence rule it inherited from its
+    /// controller, a manager without Finance could read every expense row through the report
+    /// that the expenses endpoint refuses them.
+    ///
+    /// Asserted in both directions, because the two must move together: Micro has no Finance
+    /// and is refused both, Small has Finance and is allowed both.
+    /// </summary>
+    [Fact]
+    public async Task The_expense_report_is_refused_wherever_the_expenses_endpoint_is()
+    {
+        var micro = ClientFor(EnterpriseTier.Micro, ErpRoles.Admin, companyId: 3);
+
+        Assert.Equal(HttpStatusCode.Forbidden, (await micro.GetAsync("/api/expenses")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await micro.GetAsync("/api/reports/expenses")).StatusCode);
+
+        var small = ClientFor(EnterpriseTier.Small, ErpRoles.Admin, companyId: 4);
+
+        Assert.NotEqual(HttpStatusCode.Forbidden, (await small.GetAsync("/api/expenses")).StatusCode);
+        Assert.NotEqual(HttpStatusCode.Forbidden, (await small.GetAsync("/api/reports/expenses")).StatusCode);
+    }
+
+    /// <summary>
+    /// Payment reconciliation compares the takings against the general ledger, so it needs the
+    /// ledger to exist. Small is where the ledger begins, so that is where reconciliation
+    /// begins too - and a Micro tenant, which has neither, is refused it.
+    /// </summary>
+    [Fact]
+    public async Task Payment_reconciliation_needs_the_ledger_and_so_needs_a_small_licence()
+    {
+        var micro = ClientFor(EnterpriseTier.Micro, ErpRoles.Admin, companyId: 3);
+        var refused = await micro.GetAsync("/api/reports/payment-reconciliation");
+        Assert.Equal(HttpStatusCode.Forbidden, refused.StatusCode);
+
+        // The rest of Payment Management is still theirs.
+        var payments = await micro.GetAsync("/api/payments");
+        Assert.NotEqual(HttpStatusCode.Forbidden, payments.StatusCode);
+
+        var small = ClientFor(EnterpriseTier.Small, ErpRoles.Manager, companyId: 4);
+        var allowed = await small.GetAsync("/api/reports/payment-reconciliation");
+        Assert.NotEqual(HttpStatusCode.Forbidden, allowed.StatusCode);
+        Assert.NotEqual(HttpStatusCode.Unauthorized, allowed.StatusCode);
+    }
+
+    /// <summary>
+    /// Member history reads a member's subscriptions, payments and sales through the Members
+    /// controller. All three are guarded on Member History rather than only on the module, so
+    /// the desktop's History tab and the panels on it cannot disagree about who may open them.
+    /// </summary>
+    [Theory]
+    [InlineData("/api/members/1/subscriptions")]
+    [InlineData("/api/members/1/payments")]
+    [InlineData("/api/members/1/sales")]
+    public async Task Member_history_is_reachable_by_the_front_desk_that_owns_the_member(string path)
+    {
+        var client = ClientFor(EnterpriseTier.Micro, ErpRoles.Staff, companyId: 3);
+
+        var response = await client.GetAsync(path);
+
+        // Member History is a Micro, Staff-level subfeature: the person at the desk is the one
+        // who gets asked when a charge is disputed.
+        Assert.NotEqual(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.NotEqual(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    // ------------------------------------------------------------------ platform subfeatures
+
+    /// <summary>
+    /// Platform settings and monitoring are the Super Admin's alone, at role level 0, which no
+    /// tenant role reaches on any tier.
+    /// </summary>
+    [Theory]
+    [InlineData("/api/platform/settings")]
+    [InlineData("/api/platform/health")]
+    public async Task Platform_settings_and_monitoring_are_refused_to_every_tenant_role(string path)
+    {
+        foreach (var role in new[] { ErpRoles.Staff, ErpRoles.Manager, ErpRoles.Admin })
+        {
+            var client = ClientFor(EnterpriseTier.Medium, role, companyId: 7);
+
+            var response = await client.GetAsync(path);
+
+            Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        }
+    }
+
+    // ------------------------------------------------------------------ branching
+
+    /// <summary>
+    /// Branch administration is Medium, because System Administration is. A Small owner runs a
+    /// whole gym and still cannot create a branch - which is the tier boundary doing its job
+    /// rather than an oversight.
+    /// </summary>
+    [Theory]
+    [InlineData(EnterpriseTier.Micro, 3)]
+    [InlineData(EnterpriseTier.Small, 4)]
+    public async Task Branch_administration_needs_the_medium_tier(EnterpriseTier tier, int companyId)
+    {
+        var client = ClientFor(tier, ErpRoles.Admin, companyId);
+
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync("/api/branches")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync("/api/bi/branches")).StatusCode);
+    }
+
+    /// <summary>
+    /// And it is the Admin/Owner's alone. A Manager runs a branch; they do not decide that it
+    /// exists, and the endpoint refuses them whatever the desktop drew.
+    /// </summary>
+    [Theory]
+    [InlineData("/api/branches")]
+    [InlineData("/api/bi/branches")]
+    public async Task Branch_administration_is_refused_to_a_manager_and_to_staff(string path)
+    {
+        foreach (var role in new[] { ErpRoles.Manager, ErpRoles.Staff })
+        {
+            var client = ClientFor(EnterpriseTier.Medium, role, companyId: 7);
+
+            Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync(path)).StatusCode);
+        }
+    }
+
+    /// <summary>
+    /// A Medium Admin gets past the filter on both. Past the filter is the whole assertion -
+    /// what happens next is a database call these tests deliberately do not make.
+    /// </summary>
+    [Theory]
+    [InlineData("/api/branches")]
+    [InlineData("/api/bi/branches")]
+    public async Task A_medium_owner_reaches_branch_administration(string path)
+    {
+        var client = ClientFor(EnterpriseTier.Medium, ErpRoles.Admin, companyId: 7);
+
+        var response = await client.GetAsync(path);
+
+        Assert.NotEqual(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.NotEqual(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    /// <summary>
+    /// The point of the branch claim: an account bound to a branch cannot widen or move its
+    /// own scope by sending a header. The middleware reads the claim first and never consults
+    /// the header for a caller that has one, so a branch manager asking for a sibling branch
+    /// is served their own - and, here, is refused the screen outright anyway.
+    /// </summary>
+    [Fact]
+    public async Task A_branch_bound_account_cannot_reach_another_branch_with_a_header()
+    {
+        var client = ClientFor(
+            EnterpriseTier.Medium, ErpRoles.Manager, companyId: 7, branchId: 1);
+
+        client.DefaultRequestHeaders.Add("X-Branch-Id", "2");
+
+        // Refused on the subfeature, before the header is ever relevant. Defence in depth: the
+        // claim would have overridden the header regardless.
+        Assert.Equal(
+            HttpStatusCode.Forbidden, (await client.GetAsync("/api/branches")).StatusCode);
+
+        // And on an endpoint they *are* entitled to, the header does not widen anything - the
+        // request is still served, scoped by their claim rather than by what they asked for.
+        var members = await client.GetAsync("/api/members");
+        Assert.NotEqual(HttpStatusCode.Forbidden, members.StatusCode);
+        Assert.NotEqual(HttpStatusCode.Unauthorized, members.StatusCode);
     }
 }

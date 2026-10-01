@@ -10,7 +10,14 @@ namespace ERP_infrastructure.services
         Task<List<Subscription>> GetActiveSubscriptionsAsync();
         Task<Subscription?> GetCurrentSubscriptionAsync(int memberId);
         Task<Subscription> CreateSubscriptionAsync(int memberId, int planId);
-        Task<Subscription> CreateSubscriptionAsync(int memberId, int planId, DateTime startDate);
+
+        /// <param name="memberId">
+        /// Null for a walk-in membership - one sold to somebody with no Member record. Exactly
+        /// one of <paramref name="memberId"/> or <paramref name="walkInName"/> is used.
+        /// </param>
+        Task<Subscription> CreateSubscriptionAsync(
+            int? memberId, int planId, DateTime startDate,
+            string? walkInName = null, string? walkInPhone = null);
         Task<Subscription?> RenewSubscriptionAsync(int subscriptionId);
         Task<Subscription?> CancelSubscriptionAsync(int subscriptionId);
         Task<bool> DeleteSubscriptionAsync(int id);
